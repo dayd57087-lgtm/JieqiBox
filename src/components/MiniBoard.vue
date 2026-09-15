@@ -1,48 +1,56 @@
 <template>
   <div class="mini-board" :style="{ width: size + 'px' }">
-    <img class="mini-board__bg" src="@/assets/xiangqi.png" alt="" />
+    <!-- The frame is what carries the position. Anything that describes the
+         diagram goes *outside* it, so nothing is ever drawn over a piece —
+         a caption floating on top of the board hides the bottom rank. -->
+    <div class="mini-board__frame">
+      <img class="mini-board__bg" src="@/assets/xiangqi.png" alt="" />
 
-    <!-- Pieces, drawn only where one actually stands. -->
-    <img
-      v-for="p in placedPieces"
-      :key="p.id"
-      class="mini-board__piece"
-      :class="{ 'is-dark': !p.isKnown }"
-      :src="p.src"
-      :style="{ top: p.top + '%', left: p.left + '%' }"
-      alt=""
-    />
-
-    <!-- The move that produced this prompt. -->
-    <svg
-      v-if="arrow"
-      class="mini-board__arrows"
-      viewBox="0 0 90 100"
-      preserveAspectRatio="none"
-    >
-      <defs>
-        <marker
-          id="mini-arrow-head"
-          markerWidth="2.4"
-          markerHeight="2.4"
-          refX="1.6"
-          refY="1.2"
-          orient="auto"
-        >
-          <polygon points="0 0, 2.4 1.2, 0 2.4" fill="#e53935" />
-        </marker>
-      </defs>
-      <line
-        :x1="arrow.x1"
-        :y1="arrow.y1"
-        :x2="arrow.x2"
-        :y2="arrow.y2"
-        marker-end="url(#mini-arrow-head)"
-        class="mini-board__arrow"
+      <!-- Pieces, drawn only where one actually stands. -->
+      <img
+        v-for="p in placedPieces"
+        :key="p.id"
+        class="mini-board__piece"
+        :class="{ 'is-dark': !p.isKnown }"
+        :src="p.src"
+        :style="{ top: p.top + '%', left: p.left + '%' }"
+        alt=""
       />
-    </svg>
 
-    <span v-if="label" class="mini-board__label">{{ label }}</span>
+      <!-- The move that produced this prompt. -->
+      <svg
+        v-if="arrow"
+        class="mini-board__arrows"
+        viewBox="0 0 90 100"
+        preserveAspectRatio="none"
+      >
+        <defs>
+          <marker
+            id="mini-arrow-head"
+            markerWidth="2.4"
+            markerHeight="2.4"
+            refX="1.6"
+            refY="1.2"
+            orient="auto"
+          >
+            <polygon points="0 0, 2.4 1.2, 0 2.4" fill="#e53935" />
+          </marker>
+        </defs>
+        <line
+          :x1="arrow.x1"
+          :y1="arrow.y1"
+          :x2="arrow.x2"
+          :y2="arrow.y2"
+          marker-end="url(#mini-arrow-head)"
+          class="mini-board__arrow"
+        />
+      </svg>
+    </div>
+
+    <span v-if="label" class="mini-board__label">
+      <i class="mdi mdi-arrow-right-thin" aria-hidden="true"></i>
+      {{ label }}
+    </span>
   </div>
 </template>
 
@@ -67,6 +75,7 @@
       /** Whether the board is shown from black's side. */
       flipped?: boolean
       size?: number
+      /** Caption shown under the diagram, never over it. */
       label?: string
     }>(),
     { arrowUci: null, flipped: false, size: 200, label: '' }
@@ -136,9 +145,17 @@
 
 <style scoped lang="scss">
   .mini-board {
-    position: relative;
-    aspect-ratio: 9 / 10;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--sp-1);
     margin: 0 auto;
+  }
+
+  .mini-board__frame {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 9 / 10;
     border-radius: var(--r-sm);
     overflow: hidden;
     box-shadow: var(--sh-1);
@@ -179,16 +196,18 @@
     fill: none;
   }
 
+  /* Sits under the diagram, in the flow — never on top of a piece. */
   .mini-board__label {
-    position: absolute;
-    left: 50%;
-    bottom: 4px;
-    translate: -50% 0;
-    padding: 2px 8px;
-    border-radius: var(--r-pill);
-    background: rgb(28 27 26 / 0.66);
-    color: #fff;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
     font-size: var(--fs-micro);
+    color: rgb(var(--c-text-3));
     white-space: nowrap;
+  }
+
+  .mini-board__label .mdi {
+    font-size: 14px;
+    color: #e53935;
   }
 </style>

@@ -328,7 +328,7 @@ prev.prev - 上上步（支持无限嵌套）`,
   // 翻子提示对话框
   flipPrompt: {
     lastMove: '刚走的一步',
-    chooseHint: '这枚暗子走动了，请指定它的真实棋子',
+    chooseHint: '请指定它的真实棋子',
 
     title: '翻子提示',
     message: '请选择要翻开的棋子',

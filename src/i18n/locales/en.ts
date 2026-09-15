@@ -335,7 +335,7 @@ prev.prev - Previous-previous move (supports infinite nesting)`,
   // Flip prompt dialog
   flipPrompt: {
     lastMove: 'Move just played',
-    chooseHint: 'This hidden piece moved — say what it was',
+    chooseHint: 'Say what it was',
 
     title: 'Flip Piece Prompt',
     message: 'Please select the piece to flip',

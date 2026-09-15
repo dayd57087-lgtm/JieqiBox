@@ -777,6 +777,30 @@ export function useUciEngine(generateFen: () => string, gameState: any) {
       }
     } else
       switch (finalSettings.analysisMode) {
+        case 'movetime+depth': {
+          /*
+           * Both limits in one `go`, which is the point of the mode: the UCI
+           * protocol stops at whichever comes first, so a shallow position
+           * returns as soon as it is solved and a deep one cannot run past the
+           * clock. Either condition alone is unsatisfying — a fixed movetime
+           * wastes the whole budget on an easy position, and a fixed depth can
+           * take arbitrarily long.
+           */
+          const mt = Math.floor(finalSettings.movetime || 0)
+          const dp = Math.floor(finalSettings.maxDepth || 0)
+          const parts: string[] = []
+          if (dp > 0) parts.push(`depth ${dp}`)
+          if (mt > 0) parts.push(`movetime ${mt}`)
+          lastRequestedLimits.value = {
+            movetime: mt > 0 ? mt : undefined,
+            depth: dp > 0 ? dp : undefined,
+          }
+          goCommand =
+            parts.length > 0
+              ? `go ${parts.join(' ')}${searchMovesStr}`
+              : `go infinite${searchMovesStr}`
+          break
+        }
         case 'depth':
           lastRequestedLimits.value = {
             depth: Math.floor(finalSettings.maxDepth),

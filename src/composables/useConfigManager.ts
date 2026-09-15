@@ -1,4 +1,5 @@
 import { ref, computed } from 'vue'
+import type { FlipMode } from './useGameSettings'
 import { invoke } from '@tauri-apps/api/core'
 import Ini from 'ini'
 import { isAndroidPlatform as checkAndroidPlatform } from '../utils/platform'
@@ -62,7 +63,7 @@ interface ConfigData {
     advancedScript?: string
   }
   gameSettings: {
-    flipMode: 'random' | 'free'
+    flipMode: FlipMode
     enablePonder: boolean
   }
   matchSettings: {

@@ -10,6 +10,8 @@ import { MATE_SCORE_BASE } from '@/utils/constants'
 import { isAndroidPlatform as checkAndroidPlatform } from '../utils/platform'
 import { useInterfaceSettings } from './useInterfaceSettings'
 import { useGameSettings } from './useGameSettings'
+import { useFlipPolicy } from './useFlipPolicy'
+import type { FlipMode } from './useGameSettings'
 import { useHumanVsAiSettings } from './useHumanVsAiSettings'
 import { convertXQFToJieqiNotation } from '@/utils/xqf'
 import { useOpeningBook } from './useOpeningBook'
@@ -64,7 +66,7 @@ export interface GameNotation {
     black?: string
     result?: string
     initialFen?: string
-    flipMode?: 'random' | 'free'
+    flipMode?: FlipMode
     currentFen?: string
     openingComment?: string
   }
@@ -76,7 +78,9 @@ export function useChessGame() {
   const { useNewFenFormat } = useInterfaceSettings()
 
   // Get persistent game settings
-  const { flipMode } = useGameSettings()
+  const { flipMode, isFreeFlip } = useGameSettings()
+  // Who answers for a face-down piece; see useFlipPolicy.
+  const { shouldAsk } = useFlipPolicy()
 
   // Get human vs AI settings
   const { isHumanVsAiMode, aiSide } = useHumanVsAiSettings()
@@ -240,6 +244,22 @@ export function useChessGame() {
         return piece.row >= 5 ? 'red' : 'black'
       }
     }
+  }
+
+  /**
+   * Pick a face-down identity for `side` out of its own pool, weighted by how
+   * many of each type are left. Returns null when that side has none left.
+   */
+  const drawCharForSide = (side: 'red' | 'black'): string | null => {
+    const pool: string[] = Object.entries(unrevealedPieceCounts.value)
+      .filter(([, count]) => (count as number) > 0)
+      .flatMap(([char, count]) => {
+        const name = getPieceNameFromChar(char)
+        return name.startsWith(side)
+          ? (Array(count as number).fill(char) as string[])
+          : []
+      })
+    return pool.length > 0 ? shuffle(pool)[0] : null
   }
 
   const shuffle = <T>(arr: T[]): T[] => {
@@ -1385,7 +1405,7 @@ export function useChessGame() {
       isAnimating.value = true
       // Record last move position for highlighting
       // In free mode, if it's a dark piece move, lastMovePositions has already been set in movePiece
-      if (!(flipMode.value === 'free' && pendingFlip.value)) {
+      if (!(isFreeFlip.value && pendingFlip.value)) {
         const movePositions = calculateMovePositions(data)
         lastMovePositions.value = movePositions
       }
@@ -1634,26 +1654,60 @@ export function useChessGame() {
     // Append flipped piece letter to UCI move (e.g., a3a4R)
     const flippedChar = getCharFromPieceName(chosenPieceName)
 
-    // A capture can involve two face-down pieces, and the move is not finished
-    // until both have a face: ask for the one that was taken before recording
-    // anything. Recording first would log a move whose captured piece is still
-    // unknown, which is how the captured piece used to vanish from the tally.
-    if (capturedHiddenPiece && !capturedHiddenChar) {
+    settleCapture(
+      uciMove,
+      flippedChar,
+      capturedHiddenChar,
+      capturedHiddenPiece ?? null
+    )
+  }
+
+  /**
+   * Resolve a face-down piece that was captured, then finish the move.
+   *
+   * Placing it into the capturer's tally is the point of asking: without it the
+   * opponent's pool keeps a piece that is off the board, and the material count
+   * drifts. When nobody is asked the piece is drawn instead, so the books still
+   * balance.
+   *
+   * The captured piece always belongs to the side that did *not* move, which is
+   * what lets the policy be evaluated without knowing the mover.
+   */
+  const settleCapture = (
+    uciMove: string,
+    flippedChar: string,
+    capturedHiddenChar: string | null | undefined,
+    capturedHiddenPiece: Piece | null
+  ) => {
+    if (!capturedHiddenPiece) {
+      finalizeMove(uciMove, flippedChar, capturedHiddenChar ?? null)
+      return
+    }
+
+    const capturedSide = getPieceSide(capturedHiddenPiece)
+    const capturerSide: 'red' | 'black' =
+      capturedSide === 'red' ? 'black' : 'red'
+
+    if (shouldAsk(capturerSide)) {
       pendingCaptureContext.value = { uciMove, flippedChar }
       pendingFlip.value = {
         pieceToMove: capturedHiddenPiece,
         uciMove,
-        side: getPieceSide(capturedHiddenPiece) as 'red' | 'black',
+        side: capturedSide,
         purpose: 'capture',
-        callback: chosenCaptureName => completeCapturedFlip(chosenCaptureName),
+        callback: completeCapturedFlip,
       }
-      console.log(
-        `[DEBUG] completeFlipAfterMove: awaiting the captured piece's identity.`
-      )
+      console.log(`[DEBUG] settleCapture: awaiting the captured piece.`)
       return
     }
 
-    finalizeMove(uciMove, flippedChar, capturedHiddenChar)
+    const drawn = drawCharForSide(capturedSide)
+    if (drawn) {
+      unrevealedPieceCounts.value[drawn]--
+      capturedUnrevealedPieceCounts.value[drawn] =
+        (capturedUnrevealedPieceCounts.value[drawn] || 0) + 1
+    }
+    finalizeMove(uciMove, flippedChar, drawn)
   }
 
   /**
@@ -1702,6 +1756,7 @@ export function useChessGame() {
     console.log(
       `[DEBUG] finalizeMove: recordAndFinalize with '${uciMoveWithFlip}'.`
     )
+    pendingCaptureContext.value = null
     recordAndFinalize('move', uciMoveWithFlip)
 
     // If this was an AI move, start ponder now that the flip dialog is closed
@@ -2209,25 +2264,23 @@ export function useChessGame() {
     let capturedHiddenChar: string | null = null
     /**
      * A face-down piece that was captured whose identity is not yet known.
-     * Non-null only in free flip mode, where the player decides what it was; in
-     * random mode the identity is drawn here and stored in `capturedHiddenChar`.
+     * Non-null only in free flip mode, where an answer is owed; in random mode
+     * the identity is drawn here and stored in `capturedHiddenChar`.
      */
     let capturedHiddenPiece: Piece | null = null
+
+    /** Give up on the move and put the board back the way it was. */
+    const rollbackMove = () => {
+      piece.row = originalRow
+      piece.col = originalCol
+      if (targetPiece) pieces.value.push(targetPiece)
+    }
 
     if (targetPiece) {
       if (!targetPiece.isKnown && !isMatchMode) {
         if (flipMode.value === 'random') {
-          const targetSide = getPieceSide(targetPiece)
-          const opponentPoolChars = Object.keys(
-            unrevealedPieceCounts.value
-          ).filter(
-            char =>
-              unrevealedPieceCounts.value[char] > 0 &&
-              getPieceNameFromChar(char).startsWith(targetSide)
-          )
-
-          if (opponentPoolChars.length > 0) {
-            const charToRemove = shuffle(opponentPoolChars)[0]
+          const charToRemove = drawCharForSide(getPieceSide(targetPiece))
+          if (charToRemove) {
             unrevealedPieceCounts.value[charToRemove]--
             // Add the captured piece to the captured unrevealed pool
             capturedUnrevealedPieceCounts.value[charToRemove] =
@@ -2236,8 +2289,8 @@ export function useChessGame() {
             capturedHiddenChar = charToRemove
           }
         } else {
-          // Free flip: the player says what it was, so defer until the moving
-          // piece has been identified — two prompts, in the order they happened.
+          // Free flip: the identity has to be entered, so defer until the moving
+          // piece is settled — two questions, in the order they happened.
           capturedHiddenPiece = targetPiece
         }
       }
@@ -2253,99 +2306,83 @@ export function useChessGame() {
     // Update other pieces' zIndex based on position
     updateAllPieceZIndexes()
 
-    if (wasDarkPiece && !skipFlipLogic && !isMatchMode) {
-      console.log(`[DEBUG] movePiece: Dark piece move detected.`)
-      if (flipMode.value === 'free') {
-        // In free flip mode, check if there's only one type of piece that can be flipped
-        const availablePieceTypes = Object.entries(unrevealedPieceCounts.value)
-          .filter(([, count]) => count > 0)
-          .map(([char]) => {
-            const name = getPieceNameFromChar(char)
-            // Return the piece type (e.g., 'red_pawn', 'black_cannon', etc.)
-            return name.startsWith(pieceSide) ? name : null
-          })
-          .filter(name => name !== null) as string[]
+    // A face-down piece whose identity this move has to settle, if any.
+    const moverIsFaceDown = wasDarkPiece && !skipFlipLogic && !isMatchMode
 
-        // Get unique piece types
-        const uniquePieceTypes = [...new Set(availablePieceTypes)]
+    if (moverIsFaceDown && shouldAsk(pieceSide)) {
+      console.log(`[DEBUG] movePiece: Dark piece move detected, answer owed.`)
+      // Only one piece type left? Then there is nothing to ask about.
+      const uniquePieceTypes = [
+        ...new Set(
+          Object.keys(unrevealedPieceCounts.value)
+            .filter(char => unrevealedPieceCounts.value[char] > 0)
+            .map(char => getPieceNameFromChar(char))
+            .filter(name => name.startsWith(pieceSide))
+        ),
+      ]
 
-        if (uniquePieceTypes.length === 1) {
-          // Only one type of piece can be flipped, flip it directly without showing dialog
-          console.log(
-            `[DEBUG] movePiece: Free flip mode with only one piece type. Flipping directly.`
-          )
-          // Get any piece of that type (we'll just take the first one)
-          const chosenName = uniquePieceTypes[0]
-          completeFlipAfterMove(
-            piece,
-            uciMove,
-            chosenName,
-            capturedHiddenChar,
-            capturedHiddenPiece
-          )
-        } else {
-          // Multiple types available, show flip dialog
-          console.log(
-            `[DEBUG] movePiece: Free flip mode. Setting 'pendingFlip' to open dialog.`
-          )
-          // For highlighting, we need to use display coordinates, which respect board flip.
-          const displayHighlightMove = {
-            from: {
-              row: isBoardFlipped.value ? 9 - originalRow : originalRow,
-              col: isBoardFlipped.value ? 8 - originalCol : originalCol, // Horizontal mirror flip
-            },
-            to: {
-              row: isBoardFlipped.value ? 9 - targetRow : targetRow,
-              col: isBoardFlipped.value ? 8 - targetCol : targetCol, // Horizontal mirror flip
-            },
-          }
-          lastMovePositions.value = displayHighlightMove
-
-          pendingFlip.value = {
-            pieceToMove: piece,
-            uciMove: uciMove,
-            side: pieceSide,
-            purpose: 'move',
-            callback: chosenName =>
-              completeFlipAfterMove(
-                piece,
-                uciMove,
-                chosenName,
-                capturedHiddenChar,
-                capturedHiddenPiece
-              ),
-          }
-        }
+      if (uniquePieceTypes.length === 1) {
+        console.log(
+          `[DEBUG] movePiece: Only one type possible. Flipping directly.`
+        )
+        completeFlipAfterMove(
+          piece,
+          uciMove,
+          uniquePieceTypes[0],
+          capturedHiddenChar,
+          capturedHiddenPiece
+        )
       } else {
-        const pool = Object.entries(unrevealedPieceCounts.value)
-          .filter(([, count]) => count > 0)
-          .flatMap(([char, count]) => {
-            const name = getPieceNameFromChar(char)
-            return name.startsWith(pieceSide) ? Array(count).fill(name) : []
-          })
-
-        if (pool.length === 0) {
-          alert(`错误：${pieceSide === 'red' ? '红' : '黑'}方暗子池已空！`)
-          piece.row = originalRow
-          piece.col = originalCol
-          if (targetPiece) pieces.value.push(targetPiece)
-          return
+        console.log(`[DEBUG] movePiece: Awaiting the moved piece's identity.`)
+        // For highlighting, we need to use display coordinates, which respect board flip.
+        lastMovePositions.value = {
+          from: {
+            row: isBoardFlipped.value ? 9 - originalRow : originalRow,
+            col: isBoardFlipped.value ? 8 - originalCol : originalCol,
+          },
+          to: {
+            row: isBoardFlipped.value ? 9 - targetRow : targetRow,
+            col: isBoardFlipped.value ? 8 - targetCol : targetCol,
+          },
         }
-        const chosenName = shuffle(pool)[0]
-        completeFlipAfterMove(piece, uciMove, chosenName, capturedHiddenChar)
+
+        pendingFlip.value = {
+          pieceToMove: piece,
+          uciMove: uciMove,
+          side: pieceSide,
+          purpose: 'move',
+          callback: chosenName =>
+            completeFlipAfterMove(
+              piece,
+              uciMove,
+              chosenName,
+              capturedHiddenChar,
+              capturedHiddenPiece
+            ),
+        }
       }
+    } else if (moverIsFaceDown) {
+      // Nobody is asked for this side: either random flip mode, or a free-flip
+      // game where the other side answers for its own pieces. Draw from the pool.
+      const drawnChar = drawCharForSide(pieceSide)
+      if (!drawnChar) {
+        alert(`错误：${pieceSide === 'red' ? '红' : '黑'}方暗子池已空！`)
+        rollbackMove()
+        return
+      }
+      completeFlipAfterMove(
+        piece,
+        uciMove,
+        getPieceNameFromChar(drawnChar),
+        capturedHiddenChar,
+        capturedHiddenPiece
+      )
     } else {
       console.log(`[DEBUG] movePiece: Regular move detected. Finalizing.`)
       // Set highlight
       lastMovePositions.value = highlightMove
-      console.log(
-        `[DEBUG] movePiece: About to call recordAndFinalize with move: ${uciMove}`
-      )
-      // If captured a hidden piece in random mode, append the captured piece letter
-      const finalUci = capturedHiddenChar
-        ? `${uciMove}${capturedHiddenChar}`
-        : uciMove
-      recordAndFinalize('move', finalUci)
+      // The mover needs no answer, but a face-down piece it took still might.
+      settleCapture(uciMove, '', capturedHiddenChar, capturedHiddenPiece)
     }
 
     // Ensure the moving piece stays on top during the CSS transition

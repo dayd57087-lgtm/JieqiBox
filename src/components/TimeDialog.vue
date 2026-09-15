@@ -76,7 +76,12 @@
             </v-expansion-panels>
           </div>
         </div>
-        <div class="setting-item" v-if="analysisMode === 'movetime'">
+        <div
+          class="setting-item"
+          v-if="
+            analysisMode === 'movetime' || analysisMode === 'movetime+depth'
+          "
+        >
           <label class="setting-label">{{ $t('timeDialog.movetime') }}</label>
           <v-text-field
             v-model.number="movetime"
@@ -110,7 +115,10 @@
           ></v-text-field>
         </div>
 
-        <div class="setting-item" v-if="analysisMode === 'depth'">
+        <div
+          class="setting-item"
+          v-if="analysisMode === 'depth' || analysisMode === 'movetime+depth'"
+        >
           <label class="setting-label">{{ $t('timeDialog.maxDepth') }}</label>
           <v-text-field
             v-model.number="maxDepth"
@@ -141,6 +149,10 @@
             @update:model-value="updateSettings"
           ></v-text-field>
         </div>
+
+        <p v-if="analysisMode === 'movetime+depth'" class="mode-hint">
+          {{ $t('timeDialog.movetimeDepthHint') }}
+        </p>
 
         <div class="setting-item">
           <label class="setting-label">{{
@@ -200,6 +212,10 @@
     {
       title: t('timeDialog.analysisModes.maxThinkTime'),
       value: 'maxThinkTime',
+    },
+    {
+      title: t('timeDialog.analysisModes.movetimeDepth'),
+      value: 'movetime+depth',
     },
     { title: t('timeDialog.analysisModes.depth'), value: 'depth' },
     { title: t('timeDialog.analysisModes.nodes'), value: 'nodes' },
@@ -439,6 +455,13 @@
 </script>
 
 <style lang="scss" scoped>
+  .mode-hint {
+    margin: 4px 0 10px;
+    font-size: 0.8rem;
+    line-height: 1.5;
+    opacity: 0.75;
+  }
+
   .dialog-title {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;

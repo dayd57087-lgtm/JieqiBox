@@ -493,10 +493,22 @@
               $t('analysis.freeFlipMode')
             }}</span>
             <v-switch
-              v-model="flipMode"
+              v-model="freeFlipOn"
               color="primary"
-              true-value="free"
-              false-value="random"
+              hide-details
+              density="compact"
+              class="setting-row__switch"
+            />
+          </label>
+          <!-- Same state, different variant: turning one on turns the other
+               off, because `flipMode` is a single value with three states. -->
+          <label class="setting-row">
+            <span class="setting-row__label">{{
+              $t('analysis.freeFlipLineConnect')
+            }}</span>
+            <v-switch
+              v-model="freeFlipLineConnectOn"
+              color="primary"
               hide-details
               density="compact"
               class="setting-row__switch"
@@ -888,7 +900,7 @@
   } = useInterfaceSettings()
 
   // Get persistent game settings
-  const { enablePonder } = useGameSettings()
+  const { enablePonder, flipMode } = useGameSettings()
 
   // Get human vs AI settings
   const { isHumanVsAiMode, showEngineAnalysis } = useHumanVsAiSettings()
@@ -900,7 +912,6 @@
     currentMoveIndex,
     replayToMove,
     playMoveFromUci,
-    flipMode,
     sideToMove,
     pendingFlip,
     isBoardFlipped,
@@ -990,6 +1001,28 @@
     const perf = formatEloRating(res)
     const err = formatErrorMargin(res)
     return `${perf} ${err}`.trim()
+  })
+
+  /* ---------- Flip mode switches ---------- */
+  /**
+   * Two switches over one three-state value.
+   *
+   * `flipMode` is 'random' | 'free' | 'free-inverted', so turning one variant on
+   * necessarily turns the other off — the mutual exclusion is structural rather
+   * than something the two controls have to be careful about.
+   */
+  const freeFlipOn = computed({
+    get: () => flipMode.value === 'free',
+    set: (on: boolean) => {
+      flipMode.value = on ? 'free' : 'random'
+    },
+  })
+
+  const freeFlipLineConnectOn = computed({
+    get: () => flipMode.value === 'free-inverted',
+    set: (on: boolean) => {
+      flipMode.value = on ? 'free-inverted' : 'random'
+    },
   })
 
   /* ---------- Drawer ---------- */
@@ -1895,11 +1928,11 @@
     }
 
     // No need to set ponder mode - it uses unified setting
-
-    // Force random flip mode for human vs AI mode
-    if (flipMode.value !== 'random') {
-      flipMode.value = 'random'
-    }
+    //
+    // Flip mode is deliberately left alone here. This used to force `random`,
+    // which silently disabled free flip for the whole game — and free flip is
+    // exactly what a human-vs-computer game needs, so that someone can answer
+    // for their own face-down pieces. useFlipPolicy decides who that is.
 
     // Set AI player based on selected side
     if (settings.aiSide === 'red') {

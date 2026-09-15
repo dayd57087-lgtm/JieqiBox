@@ -36,7 +36,7 @@ export interface GameNotation {
     black?: string
     result?: string
     initialFen?: string
-    flipMode?: 'random' | 'free'
+    flipMode?: FlipMode
     currentFen?: string
   }
   moves: HistoryEntry[]
@@ -963,7 +963,7 @@ export function readXQFRaw(buffer: Uint8Array): {
 }
 
 // ===== Jieqi adapter (merged from xqf-jieqi.ts) =====
-type FlipMode = 'random' | 'free'
+type FlipMode = import('../composables/useGameSettings').FlipMode
 
 function indexToUci(index: number): string {
   const file = index % 9

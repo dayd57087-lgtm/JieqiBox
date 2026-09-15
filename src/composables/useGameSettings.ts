@@ -1,8 +1,29 @@
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useConfigManager } from './useConfigManager'
 
 // Configuration manager
 const configManager = useConfigManager()
+
+/**
+ * How a face-down piece's identity is decided.
+ *
+ * - `random`        — drawn from the side's pool, nobody is asked.
+ * - `free`          — the player answering for that side chooses (see
+ *                     useFlipPolicy for *who* that is).
+ * - `free-inverted` — same as `free`, with the asking swapped between the human
+ *                     and the computer. Used when mirroring a game played
+ *                     elsewhere, where the information comes from the other
+ *                     platform rather than from this app.
+ *
+ * Modelled as one value rather than two booleans so "the two free modes are
+ * mutually exclusive" is structural: there is no state in which both are on.
+ */
+export type FlipMode = 'random' | 'free' | 'free-inverted'
+
+const FLIP_MODES: FlipMode[] = ['random', 'free', 'free-inverted']
+
+const normaliseFlipMode = (raw: unknown): FlipMode =>
+  FLIP_MODES.includes(raw as FlipMode) ? (raw as FlipMode) : 'random'
 
 /**
  * Get initial settings from the config manager
@@ -11,25 +32,19 @@ const configManager = useConfigManager()
 const getInitialSettings = () => {
   // Only access in client environment
   if (typeof window === 'undefined') {
-    return {
-      flipMode: 'random' as 'random' | 'free',
-      enablePonder: false,
-    }
+    return { flipMode: 'random' as FlipMode, enablePonder: false }
   }
 
   try {
     const settings = configManager.getGameSettings()
     return {
-      flipMode: settings.flipMode || 'random',
+      flipMode: normaliseFlipMode(settings.flipMode),
       enablePonder: !!settings.enablePonder, // Default to false
     }
   } catch (e) {
     console.error('Failed to get game settings:', e)
     // Return default values on error
-    return {
-      flipMode: 'random' as 'random' | 'free',
-      enablePonder: false,
-    }
+    return { flipMode: 'random' as FlipMode, enablePonder: false }
   }
 }
 
@@ -37,8 +52,14 @@ const getInitialSettings = () => {
 const { flipMode: initialFlipMode, enablePonder: initialEnablePonder } =
   getInitialSettings()
 
-const flipMode = ref<'random' | 'free'>(initialFlipMode)
+const flipMode = ref<FlipMode>(initialFlipMode)
 const enablePonder = ref<boolean>(initialEnablePonder)
+
+/** True whenever the player answers for face-down pieces, in either variant. */
+const isFreeFlip = computed(() => flipMode.value !== 'random')
+
+/** True only for the variant that swaps who gets asked. */
+const isFreeFlipInverted = computed(() => flipMode.value === 'free-inverted')
 
 // Flag to track if config is loaded
 const isConfigLoaded = ref(false)
@@ -69,7 +90,7 @@ export function useGameSettings() {
       const settings = configManager.getGameSettings()
 
       // Update reactive refs
-      flipMode.value = settings.flipMode || 'random'
+      flipMode.value = normaliseFlipMode(settings.flipMode)
       enablePonder.value = !!settings.enablePonder
 
       isConfigLoaded.value = true
@@ -86,6 +107,8 @@ export function useGameSettings() {
 
   return {
     flipMode,
+    isFreeFlip,
+    isFreeFlipInverted,
     enablePonder,
     loadSettings,
   }

@@ -204,12 +204,15 @@ export default {
       'Are you sure you want to clear all analysis parameter configurations? This action cannot be undone.',
     settingsCleared: 'Analysis parameter configurations cleared',
     analysisModes: {
+      movetimeDepth: 'Move time + depth',
       movetime: 'Analyze by Move Time',
       maxThinkTime: 'Analyze by Max Think Time',
       depth: 'Analyze by Depth',
       nodes: 'Analyze by Nodes',
       advanced: 'Advanced Programming Mode',
     },
+    movetimeDepthHint:
+      'Both limits apply at once. Whichever is reached first stops the search: the configured depth, or the configured move time.',
     advancedHint1:
       'Supports simple programming: assignment, arithmetic, bitwise operations, if conditions',
     advancedHint2:
@@ -396,6 +399,7 @@ prev.prev - Previous-previous move (supports infinite nesting)`,
     blackAiOn: 'Black AI (On)',
     blackAiOff: 'Black AI (Off)',
     freeFlipMode: 'Free Flip Mode',
+    freeFlipLineConnect: 'Free flip (line connect)',
     darkPiecePool: '(Captured) Dark Piece Pool',
     captureHistory: 'Capture History',
     myCaptured: 'My Captured',

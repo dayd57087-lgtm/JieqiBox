@@ -343,15 +343,29 @@
 
   const { t } = useI18n()
 
-  /* ===== Layout ===== */
-  const PAD_X = 11,
-    PAD_Y = 11,
+  /* ===== Layout =====
+   * The grid is measured off the board artwork (xiangqi.png, 844x938): its
+   * outermost lines sit at x=46.5 and x=796.5, y=46.5 and y=890.5.
+   *
+   * Note that the same 46.5px inset is a *different percentage* on each axis,
+   * because the image is taller than it is wide. Using one inset for both — as
+   * this did with a flat 11% — puts the top rank about 2px low and the bottom
+   * rank about 2px high, which reads as pieces sitting off the intersections.
+   */
+  const IMG_W = 844,
+    IMG_H = 938,
+    GRID_LEFT = 46.5,
+    GRID_RIGHT = 796.5,
+    GRID_TOP = 46.5,
+    GRID_BOTTOM = 890.5,
     COLS = 9,
-    ROWS = 10,
-    GX = 100 - PAD_X,
-    GY = 100 - PAD_Y,
-    OX = PAD_X / 2,
-    OY = PAD_Y / 2
+    ROWS = 10
+  /** Origin = the outermost grid intersection, as a percentage of the image. */
+  const OX = (GRID_LEFT / IMG_W) * 100 // 5.510
+  const OY = (GRID_TOP / IMG_H) * 100 // 4.957
+  /** Span from the first intersection to the last, as a percentage. */
+  const GX = ((GRID_RIGHT - GRID_LEFT) / IMG_W) * 100 // 88.863
+  const GY = ((GRID_BOTTOM - GRID_TOP) / IMG_H) * 100 // 89.979
   const files = computed(() => {
     const baseFiles = 'abcdefghi'.split('')
     return gs.isBoardFlipped.value ? baseFiles.slice().reverse() : baseFiles

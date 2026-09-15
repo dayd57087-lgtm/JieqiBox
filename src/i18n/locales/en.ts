@@ -77,6 +77,14 @@ export default {
 
   // UCI options dialog
 
+  // Face-down piece strip (middle of the main screen)
+  pool: {
+    title: 'Hidden',
+    red: 'R',
+    black: 'B',
+    toggleHint: 'Tap to fold or unfold the hidden-piece strip',
+  },
+
   // Bottom deck
   deck: {
     analysis: 'Analysis',
@@ -395,13 +403,6 @@ prev.prev - Previous-previous move (supports infinite nesting)`,
     collapseAll: 'Collapse all',
     expandAll: 'Expand all',
 
-    // Face-down piece strip (middle of the main screen)
-    pool: {
-      title: 'Hidden',
-      red: 'R',
-      black: 'B',
-      toggleHint: 'Tap to fold or unfold the hidden-piece strip',
-    },
     restorePanels: 'Restore Panels Layout',
     flipBoard: 'Flip Board',
     flipBoardBack: 'Restore',

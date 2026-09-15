@@ -74,6 +74,14 @@ export default {
     },
   },
 
+  // 暗子区（主界面中下部）
+  pool: {
+    title: '暗子',
+    red: '红',
+    black: '黑',
+    toggleHint: '点击收起 / 展开暗子区',
+  },
+
   // 底部标签区
   deck: {
     analysis: '分析',
@@ -388,13 +396,6 @@ prev.prev - 上上步（支持无限嵌套）`,
     collapseAll: '全部收起',
     expandAll: '全部展开',
 
-    // 暗子区（主界面中下部）
-    pool: {
-      title: '暗子',
-      red: '红',
-      black: '黑',
-      toggleHint: '点击收起 / 展开暗子区',
-    },
     restorePanels: '恢复面板布局',
     flipBoard: '翻转棋盘',
     flipBoardBack: '恢复方向',

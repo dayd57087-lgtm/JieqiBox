@@ -1,5 +1,5 @@
 <template>
-  <DraggablePanel panel-id="capture-history">
+  <DraggablePanel panel-id="capture-history" expanded-on-mobile>
     <template #header>
       <h3 class="section-title">{{ $t('analysis.captureHistory') }}</h3>
     </template>

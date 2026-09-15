@@ -186,7 +186,7 @@
 
         <DarkPiecePanel v-show="!boardMaximised" />
 
-        <AnalysisSidebar v-show="!boardMaximised" />
+        <AnalysisSidebar />
       </div>
     </div>
 

@@ -77,6 +77,11 @@ export default {
 
   // UCI options dialog
 
+  // Game settings (shown in the drawer)
+  settings: {
+    gameSettings: 'Game settings',
+  },
+
   // Face-down piece strip (middle of the main screen)
   pool: {
     title: 'Hidden',
@@ -329,6 +334,9 @@ prev.prev - Previous-previous move (supports infinite nesting)`,
 
   // Flip prompt dialog
   flipPrompt: {
+    lastMove: 'Move just played',
+    chooseHint: 'This hidden piece moved — say what it was',
+
     title: 'Flip Piece Prompt',
     message: 'Please select the piece to flip',
     confirm: 'Confirm',

@@ -20,6 +20,20 @@
         <div class="drag-handle">⋮⋮</div>
       </div>
       <div class="dialog-content">
+        <!-- Where did this choice come from? The piece has already moved, so
+             show the position with the move arrowed. -->
+        <div class="prompt-board">
+          <MiniBoard
+            :pieces="gameState.pieces.value"
+            :arrow-uci="gameState.pendingFlip.value.uciMove"
+            :flipped="gameState.isBoardFlipped.value"
+            :size="196"
+            :label="$t('flipPrompt.lastMove')"
+          />
+        </div>
+
+        <p class="prompt-hint">{{ $t('flipPrompt.chooseHint') }}</p>
+
         <div class="pieces-grid">
           <div
             v-for="item in availablePieces"
@@ -33,7 +47,7 @@
                 :alt="item.name"
                 class="piece-image"
               />
-              <div>{{ item.count }}</div>
+              <div class="piece-count">{{ item.count }}</div>
             </div>
           </div>
         </div>
@@ -55,6 +69,7 @@
   import { computed, inject, ref, onMounted, onUnmounted } from 'vue'
   import MersenneTwister from 'mersenne-twister'
   import { resolveDefaultPieceImage } from '@/utils/pieceImages'
+  import MiniBoard from './MiniBoard.vue'
 
   // Create a global instance of Mersenne Twister for this component
   const mt = new MersenneTwister()
@@ -253,64 +268,79 @@
 </script>
 
 <style scoped>
-  /* Custom dialog overlay */
+  /* Centred card rather than a free-floating draggable box: dragging made
+     sense on a desktop, but on a phone it is how a dialog ends up half off the
+     screen with its buttons unreachable. */
   .custom-dialog-overlay {
     position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: rgba(0, 0, 0, 0.5);
+    inset: 0;
     z-index: 9998;
     display: flex;
     align-items: center;
     justify-content: center;
+    padding: var(--sp-4);
+    background: var(--scrim, rgb(28 27 26 / 0.5));
+    backdrop-filter: blur(2px);
+    overflow-y: auto;
   }
 
-  /* Custom draggable dialog */
   .custom-draggable-dialog {
-    background-color: rgba(var(--v-theme-surface), 0.75);
-    border-radius: 8px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-    max-width: 500px;
     width: 100%;
-    user-select: none;
+    max-width: 380px;
+    max-height: 100%;
+    display: flex;
+    flex-direction: column;
+    border-radius: var(--r-lg);
+    background: rgb(var(--c-surface));
+    box-shadow: var(--sh-3);
     overflow: hidden;
+    user-select: none;
   }
 
-  /* Dialog title bar */
   .dialog-title-bar {
-    cursor: move;
+    flex: 0 0 auto;
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    background-color: rgba(var(--v-theme-surface), 0.75);
-    border-bottom: 1px solid
-      rgba(var(--v-border-color), var(--v-border-opacity));
-    padding: 16px 20px;
-    font-size: 18px;
-    font-weight: 500;
+    justify-content: space-between;
+    gap: var(--sp-2);
+    padding: var(--sp-3) var(--sp-4);
+    border-bottom: 1px solid rgb(var(--c-divider));
+    font-size: var(--fs-md);
+    font-weight: var(--fw-semibold);
+    /* No longer a drag handle. */
+    cursor: default;
   }
 
   .drag-handle {
-    font-size: 16px;
-    color: rgb(var(--v-theme-on-surface));
-    cursor: move;
-    user-select: none;
+    display: none;
   }
 
-  /* Dialog content */
   .dialog-content {
-    padding: 20px;
-    background-color: rgba(var(--v-theme-surface), 0.75);
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: var(--sp-4);
   }
 
-  /* Pieces grid */
+  .prompt-board {
+    display: flex;
+    justify-content: center;
+    margin-bottom: var(--sp-2);
+  }
+
+  .prompt-hint {
+    margin: 0 0 var(--sp-3);
+    text-align: center;
+    font-size: var(--fs-sm);
+    color: rgb(var(--c-text-2));
+  }
+
+  /* Two rows of three: six pieces fit without shrinking the tap targets. */
   .pieces-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(60px, 1fr));
-    gap: 8px;
-    margin-bottom: 20px;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--sp-2);
   }
 
   .piece-item {
@@ -318,40 +348,57 @@
   }
 
   .piece-option {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    min-height: 72px;
+    padding: var(--sp-2);
+    border: 1px solid rgb(var(--c-border));
+    border-radius: var(--r-md);
+    background: rgb(var(--c-surface-2));
     cursor: pointer;
-    padding: 10px;
-    border-radius: 8px;
-    transition: background-color 0.2s;
-    border: 1px solid transparent;
-    background-color: rgba(var(--v-theme-surface), 0.75);
+    transition:
+      background var(--dur-fast) var(--ease-out),
+      border-color var(--dur-fast) var(--ease-out),
+      transform var(--dur-fast) var(--ease-out);
   }
 
-  .piece-option:hover {
-    background-color: rgba(var(--v-theme-primary), 0.1);
-    border-color: rgba(var(--v-border-color), var(--v-border-opacity));
+  .piece-option:active {
+    transform: scale(0.96);
+    background: rgb(var(--c-primary-soft));
+    border-color: rgb(var(--c-primary));
   }
 
   .piece-image {
     width: 40px;
     height: 40px;
     display: block;
-    margin: 0 auto 5px;
   }
 
-  /* Error message */
+  .piece-count {
+    font-size: var(--fs-sm);
+    font-weight: var(--fw-semibold);
+    color: rgb(var(--c-text-2));
+    font-variant-numeric: tabular-nums;
+  }
+
   .error-message {
     text-align: center;
-    color: rgb(var(--v-theme-error));
-    padding: 10px;
+    color: rgb(var(--c-danger));
+    padding: var(--sp-3);
+    font-size: var(--fs-base);
   }
 
-  /* Dialog actions */
   .dialog-actions {
+    flex: 0 0 auto;
     display: flex;
     justify-content: flex-end;
-    padding: 16px 20px;
-    border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-    background-color: rgba(var(--v-theme-surface), 0.75);
+    padding: var(--sp-3) var(--sp-4);
+    padding-bottom: calc(var(--sp-3) + env(safe-area-inset-bottom));
+    border-top: 1px solid rgb(var(--c-divider));
   }
 
   .spacer {
@@ -359,17 +406,18 @@
   }
 
   .cancel-btn {
-    background-color: rgba(var(--v-theme-surface), 0.75);
-    color: rgb(var(--v-theme-on-surface));
-    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-    padding: 8px 16px;
-    border-radius: 4px;
+    min-height: 44px;
+    padding: 0 var(--sp-5);
+    border: 1px solid rgb(var(--c-border));
+    border-radius: var(--r-sm);
+    background: transparent;
+    color: rgb(var(--c-text-2));
+    font-size: var(--fs-base);
     cursor: pointer;
-    font-size: 14px;
-    transition: background-color 0.2s;
+    transition: background var(--dur-fast) var(--ease-out);
   }
 
-  .cancel-btn:hover {
-    background-color: rgba(var(--v-theme-primary), 0.1);
+  .cancel-btn:active {
+    background: rgb(var(--c-surface-3));
   }
 </style>

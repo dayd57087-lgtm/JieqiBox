@@ -1,7 +1,9 @@
 <template>
   <div class="workbench">
-    <!-- ── 底部标签区：只有 分析 / 开局库 / 导航 ────────────────── -->
-    <BottomDeck>
+    <!-- ── 底部标签区：只有 分析 / 开局库 / 导航 ──────────────────
+         最大化时收起，但操作条保留 —— 最大化按钮就在操作条上，
+         把它一起藏掉就再也回不来了。 -->
+    <BottomDeck v-show="!isMaximised">
       <template #analysis>
         <div class="mode-bar" v-if="isMatchMode || isHumanVsAiMode">
           <template v-if="isMatchMode">
@@ -293,10 +295,18 @@
             </div>
           </div>
         </div>
-        <p v-else class="pane-empty">{{ $t('deck.empty') }}</p>
+        <!-- 人机对战且未开引擎分析时，面板里放的是吃子记录，
+             这时不该再叠一句「暂无内容」。 -->
+        <p v-else-if="!isHumanVsAiMode" class="pane-empty">
+          {{ $t('deck.empty') }}
+        </p>
 
-        <!-- 人机对战模式下要随时看到双方吃掉的暗子 -->
-        <CaptureHistoryPanel v-if="isHumanVsAiMode" class="pane-aside" />
+        <!-- 人机对战模式下要随时看到双方吃掉的暗子。
+             DraggablePanel 有两个根节点，Vue 不会把父组件传的 class 继承下去，
+             所以这里包一层来承载布局样式。 -->
+        <div v-if="isHumanVsAiMode" class="pane-aside">
+          <CaptureHistoryPanel />
+        </div>
       </template>
 
       <template #book>
@@ -395,6 +405,90 @@
       @about="openAboutDialog"
     >
       <template #extra>
+        <!-- 引擎选择 —— 加载引擎、比赛模式、人机对战都要先选它 -->
+        <section class="drawer-panel">
+          <h4 class="drawer-panel__title">{{ $t('analysis.selectEngine') }}</h4>
+          <div class="engine-picker">
+            <v-select
+              v-model="selectedEngineId"
+              :items="managedEngines"
+              item-title="name"
+              item-value="id"
+              :label="$t('analysis.selectEngine')"
+              density="compact"
+              hide-details
+              variant="outlined"
+              class="engine-picker__select"
+            />
+            <button
+              type="button"
+              class="engine-picker__btn"
+              :disabled="
+                !selectedEngineId ||
+                (isMatchMode
+                  ? jaiEngine?.isEngineLoaded?.value
+                  : isEngineLoaded)
+              "
+              :title="$t('analysis.loadEngine')"
+              @click="loadSelectedEngine"
+            >
+              <i class="mdi mdi-play-circle-outline"></i>
+            </button>
+            <button
+              type="button"
+              class="engine-picker__btn"
+              :disabled="
+                !(isMatchMode
+                  ? jaiEngine?.isEngineLoaded?.value
+                  : isEngineLoaded)
+              "
+              :title="$t('analysis.unloadEngine')"
+              @click="handleUnloadEngine"
+            >
+              <i class="mdi mdi-stop-circle-outline"></i>
+            </button>
+            <button
+              type="button"
+              class="engine-picker__btn"
+              :title="$t('analysis.manageEngines')"
+              @click="showEngineManager = true"
+            >
+              <i class="mdi mdi-cogs"></i>
+            </button>
+          </div>
+        </section>
+
+        <!-- 对局设置 -->
+        <section class="drawer-panel">
+          <h4 class="drawer-panel__title">{{ $t('settings.gameSettings') }}</h4>
+          <label class="setting-row">
+            <span class="setting-row__label">{{
+              $t('analysis.freeFlipMode')
+            }}</span>
+            <v-switch
+              v-model="flipMode"
+              color="primary"
+              true-value="free"
+              false-value="random"
+              hide-details
+              density="compact"
+              class="setting-row__switch"
+            />
+          </label>
+          <label class="setting-row">
+            <span class="setting-row__label">{{
+              $t('analysis.ponderMode')
+            }}</span>
+            <v-switch
+              v-model="enablePonder"
+              color="primary"
+              hide-details
+              density="compact"
+              class="setting-row__switch"
+            />
+          </label>
+        </section>
+
         <section v-if="shouldShowLuckIndex" class="drawer-panel">
           <h4 class="drawer-panel__title">{{ $t('analysis.luckIndex') }}</h4>
           <div class="luck-index-panel">
@@ -912,7 +1006,7 @@
   }
 
   /* ---------- Nav bar ---------- */
-  const { toggleMaximised } = useBoardViewState()
+  const { isMaximised, toggleMaximised } = useBoardViewState()
   const isAnnotationMode = ref(false)
 
   /**

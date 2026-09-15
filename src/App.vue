@@ -11,6 +11,7 @@
   import GameEndDialog from './components/GameEndDialog.vue'
 
   import { useChessGame } from './composables/useChessGame'
+  import { useBoardViewState } from './composables/useBoardViewState'
   import { useUciEngine } from './composables/useUciEngine'
   import { useJaiEngine } from './composables/useJaiEngine'
   import { useInterfaceSettings } from './composables/useInterfaceSettings'
@@ -89,7 +90,8 @@
    * strip, the analysis deck and the nav bar all step aside; the toolbar
    * stays, because it is how you get back.
    */
-  const boardMaximised = ref(false)
+  // Shared with the nav bar, which owns the toggle.
+  const { isMaximised: boardMaximised } = useBoardViewState()
 
   /**
    * The board is a fixed 9:10 rectangle, so sizing it by width alone breaks on
@@ -261,9 +263,11 @@
     }
   }
 
-  /* Board maximised: everything below the board steps aside. */
+  /* Board maximised: everything below the board steps aside. Keep the side
+     padding tight — the board is width-limited on a phone, so any extra
+     horizontal padding here would make it *smaller*, not bigger. */
   .app-main.is-maximised .chessboard-area {
-    padding: var(--sp-3);
+    padding: var(--sp-2) 5px;
   }
 
   @media (min-width: 769px) {

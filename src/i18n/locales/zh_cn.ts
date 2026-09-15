@@ -337,7 +337,9 @@ prev.prev - 上上步（支持无限嵌套）`,
   flipPrompt: {
     lastMove: '刚走的一步',
     chooseHint: '请指定它的真实棋子',
-
+    captureTitle: '被吃的暗子',
+    captureHint: '它被吃掉了，请指定它是什么',
+    capturedPiece: '被吃的暗子',
     title: '翻子提示',
     message: '请选择要翻开的棋子',
     confirm: '确认',

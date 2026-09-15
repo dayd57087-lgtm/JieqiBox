@@ -16,7 +16,13 @@
         @mousedown="startDrag"
         @touchstart="startDrag"
       >
-        <span class="text-h5">{{ $t('flipPrompt.title') }}</span>
+        <span class="text-h5">
+          {{
+            gameState.pendingFlip.value.purpose === 'capture'
+              ? $t('flipPrompt.captureTitle')
+              : $t('flipPrompt.title')
+          }}
+        </span>
         <div class="drag-handle">⋮⋮</div>
       </div>
       <div class="dialog-content">
@@ -28,11 +34,21 @@
             :arrow-uci="gameState.pendingFlip.value.uciMove"
             :flipped="gameState.isBoardFlipped.value"
             :size="196"
-            :label="$t('flipPrompt.lastMove')"
+            :label="
+              gameState.pendingFlip.value.purpose === 'capture'
+                ? $t('flipPrompt.capturedPiece')
+                : $t('flipPrompt.lastMove')
+            "
           />
         </div>
 
-        <p class="prompt-hint">{{ $t('flipPrompt.chooseHint') }}</p>
+        <p class="prompt-hint">
+          {{
+            gameState.pendingFlip.value.purpose === 'capture'
+              ? $t('flipPrompt.captureHint')
+              : $t('flipPrompt.chooseHint')
+          }}
+        </p>
 
         <div class="pieces-grid">
           <div
@@ -237,6 +253,12 @@
         const randomIndex = Math.floor(mtRandom() * pool.length)
         const chosenName = pool[randomIndex]
         gameState.pendingFlip.value.callback(chosenName)
+      } else if (gameState.pendingFlip.value.purpose === 'capture') {
+        // Dismissing the capture prompt must still finish the move — the piece
+        // that moved is already revealed, and the history entry is written by
+        // the callback. An empty name just means the captured piece stays
+        // unaccounted for, which the owner handles.
+        gameState.pendingFlip.value.callback('')
       } else {
         // If no pieces are available, just cancel
         const uciMove = gameState.pendingFlip.value.uciMove

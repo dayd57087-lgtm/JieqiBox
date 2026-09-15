@@ -102,13 +102,22 @@
     y: OY + (row / (ROWS - 1)) * GY,
   })
 
+  /** Standard coordinates → display coordinates. Only the arrow needs this. */
   const displayRC = (row: number, col: number) =>
     props.flipped ? [ROWS - 1 - row, COLS - 1 - col] : [row, col]
 
+  /**
+   * Pieces are drawn at their stored coordinates, *without* mirroring.
+   *
+   * That looks wrong at first glance, but this app's flip model mirrors the
+   * pieces themselves: `toggleBoardFlip` rewrites every piece's row/col and
+   * flips the flag. So `piece.row/col` is always display space already, and
+   * mirroring it again here cancels the flip out — which is exactly the bug
+   * that made this thumbnail sit still while the main board turned over.
+   */
   const placedPieces = computed(() =>
     (props.pieces || []).map((p: any) => {
-      const [r, c] = displayRC(p.row, p.col)
-      const { x, y } = pct(r, c)
+      const { x, y } = pct(p.row, p.col)
       return {
         id: p.id,
         isKnown: p.isKnown,
@@ -121,6 +130,11 @@
     })
   )
 
+  /**
+   * The arrow is the exception: `uciMove` is in standard board coordinates
+   * (rank 9 = row 0, file a = col 0), so it does need the display transform —
+   * the same one `Chessboard.uciToDisplayRC` applies.
+   */
   const arrow = computed(() => {
     const uci = props.arrowUci
     if (!uci || uci.length < 4) return null

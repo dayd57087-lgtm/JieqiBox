@@ -344,7 +344,9 @@ prev.prev - Previous-previous move (supports infinite nesting)`,
   flipPrompt: {
     lastMove: 'Move just played',
     chooseHint: 'Say what it was',
-
+    captureTitle: 'Captured piece',
+    captureHint: 'It was taken — say what it was',
+    capturedPiece: 'Captured piece',
     title: 'Flip Piece Prompt',
     message: 'Please select the piece to flip',
     confirm: 'Confirm',

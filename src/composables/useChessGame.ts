@@ -116,7 +116,24 @@ export function useChessGame() {
     pieceToMove: Piece
     uciMove: string
     side: 'red' | 'black'
+    /**
+     * Which face-down piece is being identified.
+     *
+     * A capture can involve two of them: the piece that moved, and the piece it
+     * took. Both have to be resolved before the move is complete, so they are
+     * asked for one after the other.
+     */
+    purpose: 'move' | 'capture'
     callback: (chosenPieceName: string) => void
+  } | null>(null)
+
+  /**
+   * Set while the mover has been identified but the captured piece has not.
+   * Holds everything needed to finish the move once the second answer arrives.
+   */
+  const pendingCaptureContext = ref<{
+    uciMove: string
+    flippedChar: string
   } | null>(null)
 
   // Arrow clear event callbacks
@@ -1436,6 +1453,9 @@ export function useChessGame() {
     currentMoveIndex.value = 0
     openingComment.value = ''
     lastMovePositions.value = null // Clear highlights for new game
+    // A half-finished two-step flip belongs to the old game.
+    pendingFlip.value = null
+    pendingCaptureContext.value = null
 
     // Clear engine analysis time data from previous games
     try {
@@ -1569,7 +1589,8 @@ export function useChessGame() {
     piece: Piece,
     uciMove: string,
     chosenPieceName: string,
-    capturedHiddenChar?: string | null
+    capturedHiddenChar?: string | null,
+    capturedHiddenPiece?: Piece | null
   ) => {
     console.log(
       `[DEBUG] completeFlipAfterMove: Entered. User chose '${chosenPieceName}'.`
@@ -1579,6 +1600,7 @@ export function useChessGame() {
     if ((unrevealedPieceCounts.value[char] || 0) <= 0) {
       alert(`错误：暗子池中没有 ${chosenPieceName} 了！`)
       pendingFlip.value = null
+      pendingCaptureContext.value = null
       return
     }
 
@@ -1608,34 +1630,84 @@ export function useChessGame() {
       `[DEBUG] completeFlipAfterMove: 'pendingFlip' cleared. Finalizing move.`
     )
 
-    // Check if this was an AI move before calling recordAndFinalize (which clears the flag)
-    const isAiMove = (window as any).__LAST_AI_MOVE__ === uciMove
-
     // In free mode, lastMovePositions has already been set in movePiece, here we only need to record history
     // Append flipped piece letter to UCI move (e.g., a3a4R)
     const flippedChar = getCharFromPieceName(chosenPieceName)
-    let uciMoveWithFlip = `${uciMove}${flippedChar}`
 
-    // Always append captured piece info to maintain complete UCI format
-    // The display logic will handle what information to show to humans
-    if (capturedHiddenChar) {
-      uciMoveWithFlip += capturedHiddenChar
+    // A capture can involve two face-down pieces, and the move is not finished
+    // until both have a face: ask for the one that was taken before recording
+    // anything. Recording first would log a move whose captured piece is still
+    // unknown, which is how the captured piece used to vanish from the tally.
+    if (capturedHiddenPiece && !capturedHiddenChar) {
+      pendingCaptureContext.value = { uciMove, flippedChar }
+      pendingFlip.value = {
+        pieceToMove: capturedHiddenPiece,
+        uciMove,
+        side: getPieceSide(capturedHiddenPiece) as 'red' | 'black',
+        purpose: 'capture',
+        callback: chosenCaptureName => completeCapturedFlip(chosenCaptureName),
+      }
+      console.log(
+        `[DEBUG] completeFlipAfterMove: awaiting the captured piece's identity.`
+      )
+      return
     }
+
+    finalizeMove(uciMove, flippedChar, capturedHiddenChar)
+  }
+
+  /**
+   * Resolve the face-down piece that was captured and then finish the move.
+   *
+   * Placing the captured piece into the capturer's tally is the whole point of
+   * asking: without it the opponent's pool keeps a piece that is off the board,
+   * and the material count drifts.
+   */
+  const completeCapturedFlip = (chosenPieceName: string) => {
+    const ctx = pendingCaptureContext.value
+    if (!ctx) return
+
+    // An empty name means the prompt was dismissed without a choice (or the
+    // opponent's pool was exhausted). Finish the move anyway: stranding the
+    // history entry would be worse than leaving that piece unaccounted for.
+    const char = chosenPieceName ? getCharFromPieceName(chosenPieceName) : ''
+    let capturedChar: string | null = null
+
+    if (char && (unrevealedPieceCounts.value[char] || 0) > 0) {
+      unrevealedPieceCounts.value[char]--
+      capturedUnrevealedPieceCounts.value[char] =
+        (capturedUnrevealedPieceCounts.value[char] || 0) + 1
+      capturedChar = char
+    }
+
+    pendingFlip.value = null
+    pendingCaptureContext.value = null
+    finalizeMove(ctx.uciMove, ctx.flippedChar, capturedChar)
+  }
+
+  /** Record the move in history, and let a pending AI flow know it is done. */
+  const finalizeMove = (
+    uciMove: string,
+    flippedChar: string,
+    capturedHiddenChar?: string | null
+  ) => {
+    // Check if this was an AI move before calling recordAndFinalize (which clears the flag)
+    const isAiMove = (window as any).__LAST_AI_MOVE__ === uciMove
+
+    let uciMoveWithFlip = `${uciMove}${flippedChar}`
+    // Always append captured piece info to maintain complete UCI format.
+    // The display logic decides what to show to humans.
+    if (capturedHiddenChar) uciMoveWithFlip += capturedHiddenChar
+
     console.log(
-      `[DEBUG] completeFlipAfterMove: About to call recordAndFinalize with move: ${uciMoveWithFlip}`
+      `[DEBUG] finalizeMove: recordAndFinalize with '${uciMoveWithFlip}'.`
     )
     recordAndFinalize('move', uciMoveWithFlip)
 
     // If this was an AI move, start ponder now that the flip dialog is closed
     if (isAiMove) {
-      console.log(
-        `[DEBUG] completeFlipAfterMove: AI move completed after flip dialog. Checking if ponder should start.`
-      )
       const ponderState = (window as any).__PONDER_STATE__
       if (ponderState && ponderState.handlePonderAfterMove) {
-        console.log(
-          `[DEBUG] completeFlipAfterMove: Triggering ponder for AI move: ${uciMove}`
-        )
         ponderState.handlePonderAfterMove(uciMove, true)
       }
     }
@@ -2135,27 +2207,38 @@ export function useChessGame() {
     }
 
     let capturedHiddenChar: string | null = null
-    if (targetPiece) {
-      // In free flip mode, capturing opponent's hidden piece should not affect their unrevealed pool
-      // Only in random flip mode and not in match mode, we randomly remove a piece from opponent's pool
-      if (!targetPiece.isKnown && flipMode.value === 'random' && !isMatchMode) {
-        const targetSide = getPieceSide(targetPiece)
-        const opponentPoolChars = Object.keys(
-          unrevealedPieceCounts.value
-        ).filter(
-          char =>
-            unrevealedPieceCounts.value[char] > 0 &&
-            getPieceNameFromChar(char).startsWith(targetSide)
-        )
+    /**
+     * A face-down piece that was captured whose identity is not yet known.
+     * Non-null only in free flip mode, where the player decides what it was; in
+     * random mode the identity is drawn here and stored in `capturedHiddenChar`.
+     */
+    let capturedHiddenPiece: Piece | null = null
 
-        if (opponentPoolChars.length > 0) {
-          const charToRemove = shuffle(opponentPoolChars)[0]
-          unrevealedPieceCounts.value[charToRemove]--
-          // Add the captured piece to the captured unrevealed pool
-          capturedUnrevealedPieceCounts.value[charToRemove] =
-            (capturedUnrevealedPieceCounts.value[charToRemove] || 0) + 1
-          // Remember which hidden piece was virtually captured for UCI annotation
-          capturedHiddenChar = charToRemove
+    if (targetPiece) {
+      if (!targetPiece.isKnown && !isMatchMode) {
+        if (flipMode.value === 'random') {
+          const targetSide = getPieceSide(targetPiece)
+          const opponentPoolChars = Object.keys(
+            unrevealedPieceCounts.value
+          ).filter(
+            char =>
+              unrevealedPieceCounts.value[char] > 0 &&
+              getPieceNameFromChar(char).startsWith(targetSide)
+          )
+
+          if (opponentPoolChars.length > 0) {
+            const charToRemove = shuffle(opponentPoolChars)[0]
+            unrevealedPieceCounts.value[charToRemove]--
+            // Add the captured piece to the captured unrevealed pool
+            capturedUnrevealedPieceCounts.value[charToRemove] =
+              (capturedUnrevealedPieceCounts.value[charToRemove] || 0) + 1
+            // Remember which hidden piece was virtually captured for UCI annotation
+            capturedHiddenChar = charToRemove
+          }
+        } else {
+          // Free flip: the player says what it was, so defer until the moving
+          // piece has been identified — two prompts, in the order they happened.
+          capturedHiddenPiece = targetPiece
         }
       }
       pieces.value = pieces.value.filter(p => p.id !== targetPiece.id)
@@ -2193,7 +2276,13 @@ export function useChessGame() {
           )
           // Get any piece of that type (we'll just take the first one)
           const chosenName = uniquePieceTypes[0]
-          completeFlipAfterMove(piece, uciMove, chosenName, capturedHiddenChar)
+          completeFlipAfterMove(
+            piece,
+            uciMove,
+            chosenName,
+            capturedHiddenChar,
+            capturedHiddenPiece
+          )
         } else {
           // Multiple types available, show flip dialog
           console.log(
@@ -2216,12 +2305,14 @@ export function useChessGame() {
             pieceToMove: piece,
             uciMove: uciMove,
             side: pieceSide,
+            purpose: 'move',
             callback: chosenName =>
               completeFlipAfterMove(
                 piece,
                 uciMove,
                 chosenName,
-                capturedHiddenChar
+                capturedHiddenChar,
+                capturedHiddenPiece
               ),
           }
         }
@@ -2467,6 +2558,7 @@ export function useChessGame() {
       // If there was explicit flip information, clear any pending flip dialog
       if (pendingFlip.value) {
         pendingFlip.value = null
+        pendingCaptureContext.value = null
       }
 
       // Ensure the just-recorded move in history includes the explicit flip info

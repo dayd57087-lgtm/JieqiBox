@@ -16,6 +16,7 @@ import { usePanelManager } from './composables/usePanelManager'
 // component defaults win over Vuetify's stock MD3 values.
 import './styles/tokens.scss'
 import './styles/base.scss'
+import './styles/workbench.scss'
 import { LIGHT_THEME_COLORS, DARK_THEME_COLORS } from './styles/theme'
 
 const vuetify = createVuetify({

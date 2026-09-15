@@ -1,10 +1,11 @@
 <script setup lang="ts">
-  import { provide, computed, watch, onMounted, onUnmounted } from 'vue'
+  import { provide, computed, ref, watch, onMounted, onUnmounted } from 'vue'
   import { useI18n } from 'vue-i18n'
   import { useTheme } from 'vuetify'
   import TopToolbar from './components/TopToolbar.vue'
   import Chessboard from './components/Chessboard.vue'
   import AnalysisSidebar from './components/AnalysisSidebar.vue'
+  import DarkPiecePanel from './components/DarkPiecePanel.vue'
   import FlipPromptDialog from './components/FlipPromptDialog.vue'
   import FenInputDialog from './components/FenInputDialog.vue'
   import GameEndDialog from './components/GameEndDialog.vue'
@@ -83,8 +84,50 @@
   // Initialize window manager for window size persistence
   const windowManager = useWindowManager()
 
+  /**
+   * Board maximised = the board keeps the whole screen. The hidden-piece
+   * strip, the analysis deck and the nav bar all step aside; the toolbar
+   * stays, because it is how you get back.
+   */
+  const boardMaximised = ref(false)
+
+  /**
+   * The board is a fixed 9:10 rectangle, so sizing it by width alone breaks on
+   * a phone: the height runs out first and the board overflows its area.
+   *
+   * CSS cannot express "fit inside the parent on both axes while keeping the
+   * ratio" — `aspect-ratio` is dropped the moment both axes are constrained,
+   * which is exactly our case. So measure once per layout change.
+   */
+  const boardAreaEl = ref<HTMLElement | null>(null)
+  let boardObserver: ResizeObserver | null = null
+
+  const fitBoard = () => {
+    const el = boardAreaEl.value
+    if (!el) return
+    const cs = getComputedStyle(el)
+    const availW =
+      el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)
+    const availH =
+      el.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom)
+    if (availW <= 0 || availH <= 0) return
+    el.style.setProperty(
+      '--board-w',
+      `${Math.floor(Math.min(availW, (availH * 9) / 10))}px`
+    )
+  }
+
+  watch([boardMaximised, showPositionChart], () =>
+    requestAnimationFrame(fitBoard)
+  )
+
   // Load configuration when app mounts
   onMounted(async () => {
+    if (boardAreaEl.value) {
+      boardObserver = new ResizeObserver(fitBoard)
+      boardObserver.observe(boardAreaEl.value)
+      requestAnimationFrame(fitBoard)
+    }
     try {
       await configManager.loadConfig()
 
@@ -118,6 +161,8 @@
 
   // Clean up autosave timer when app unmounts
   onUnmounted(() => {
+    boardObserver?.disconnect()
+    boardObserver = null
     autosave.stopAutosaveTimer()
     // Window manager cleanup is handled automatically by its own onUnmounted hook
   })
@@ -126,87 +171,104 @@
 <template>
   <div class="app-container" :lang="htmlLang">
     <TopToolbar />
-    <div class="main-layout">
-      <div class="chessboard-area" :class="{ 'with-chart': showPositionChart }">
-        <Chessboard />
+
+    <div class="app-body">
+      <div class="app-main" :class="{ 'is-maximised': boardMaximised }">
+        <div
+          ref="boardAreaEl"
+          class="chessboard-area"
+          :class="{ 'with-chart': showPositionChart }"
+        >
+          <Chessboard />
+        </div>
+
+        <DarkPiecePanel v-show="!boardMaximised" />
+
+        <AnalysisSidebar v-show="!boardMaximised" />
       </div>
-      <AnalysisSidebar />
-      <FlipPromptDialog />
-      <FenInputDialog
-        v-model="game.isFenInputDialogVisible.value"
-        @confirm="game.confirmFenInput"
-      />
-      <GameEndDialog
-        :visible="game.isGameEndDialogVisible.value"
-        :game-result="game.gameEndResult.value"
-        :on-close="() => (game.isGameEndDialogVisible.value = false)"
-      />
     </div>
+
+    <FlipPromptDialog />
+    <FenInputDialog
+      v-model="game.isFenInputDialogVisible.value"
+      @confirm="game.confirmFenInput"
+    />
+    <GameEndDialog
+      :visible="game.isGameEndDialogVisible.value"
+      :game-result="game.gameEndResult.value"
+      :on-close="() => (game.isGameEndDialogVisible.value = false)"
+    />
   </div>
 </template>
 
 <style lang="scss" scoped>
+  /* The app is a fixed-height column: toolbar, then a body that fills the
+     rest. Nothing scrolls as a whole — the deck scrolls inside itself, which
+     is what keeps the board anchored instead of drifting up the page. */
   .app-container {
     display: flex;
     flex-direction: column;
-    min-height: 100vh;
-    background-color: rgb(var(--v-theme-background));
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+    background-color: rgb(var(--c-bg));
   }
 
-  .main-layout {
+  .app-body {
+    flex: 1;
+    min-height: 0;
     display: flex;
     flex-direction: row;
-    align-items: flex-start;
-    justify-content: center;
-    flex: 1;
-    width: 100%;
-    padding: var(--sp-5);
-    gap: var(--sp-5);
-    box-sizing: border-box;
-    background-color: rgb(var(--c-bg));
-    max-height: calc(
-      100vh - 80px
-    ); /* Prevent layout from exceeding viewport height */
-    overflow: hidden; /* Prevent scrolling when content fits */
+    overflow: hidden;
+  }
 
-    // Mobile: the board and the analysis panels stack into one scrolling page.
-    @media (max-width: 768px) {
-      flex-direction: column;
-      align-items: stretch;
-      padding: 0 var(--sp-3) var(--sp-4);
-      gap: 0;
-      max-height: none;
-      overflow: visible;
-    }
+  .app-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
   }
 
   .chessboard-area {
+    flex: 1 1 auto;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding-top: var(--sp-4);
-    max-height: 100%; /* Ensure it doesn't exceed parent height */
+    justify-content: center;
+    padding: var(--sp-2) 5px;
+    overflow: hidden;
 
-    // On desktop, when position chart is shown, make chessboard smaller
-    &.with-chart {
-      .chessboard-wrapper {
-        transform: scale(0.75);
-        transform-origin: top center;
-      }
+    /* --board-w is written by fitBoard(); the board's own component CSS sizes
+       it from width, so constraining the wrapper is enough. */
+    :deep(.chessboard-wrapper) {
+      width: var(--board-w, 100%);
+      max-width: none;
+      margin: 0;
     }
 
-    // Mobile responsive adjustments
-    @media (max-width: 768px) {
-      padding-top: 0;
-      width: 100%;
-      max-height: none; /* Allow natural height on mobile */
+    /* Position chart shrinks the board rather than pushing it off screen. */
+    &.with-chart .chessboard-wrapper {
+      transform: scale(0.75);
+      transform-origin: top center;
+    }
 
-      // On mobile, disable the scaling when chart is shown
-      &.with-chart {
-        .chessboard-wrapper {
-          transform: none;
-        }
+    @media (max-width: 768px) {
+      &.with-chart .chessboard-wrapper {
+        transform: none;
       }
+    }
+  }
+
+  /* Board maximised: everything below the board steps aside. */
+  .app-main.is-maximised .chessboard-area {
+    padding: var(--sp-3);
+  }
+
+  @media (min-width: 769px) {
+    .chessboard-area {
+      padding: var(--sp-4) var(--sp-5);
     }
   }
 </style>

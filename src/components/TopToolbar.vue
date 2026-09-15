@@ -1,7 +1,17 @@
 <template>
   <header class="top-toolbar">
-    <!-- ── Row 1 · identity, engine status, overflow menu ────────────── -->
+    <!-- ── Identity · engine status · drawer ────────────────────────── -->
     <div class="tbar">
+      <button
+        type="button"
+        class="icon-btn"
+        :title="$t('toolbar.menu.title')"
+        :aria-label="$t('toolbar.menu.title')"
+        @click="toggleDrawer"
+      >
+        <i class="mdi mdi-menu"></i>
+      </button>
+
       <div class="brand">
         <span class="brand__mark" aria-hidden="true">揭</span>
         <span class="brand__name">{{ $t('toolbar.gameTitle') }}</span>
@@ -11,129 +21,6 @@
         <span class="engine-pill__dot" aria-hidden="true"></span>
         <span class="engine-pill__text">{{ enginePillText }}</span>
       </span>
-
-      <v-menu location="bottom end" :offset="6">
-        <template #activator="{ props }">
-          <button
-            v-bind="props"
-            type="button"
-            class="icon-btn"
-            :aria-label="$t('toolbar.menu.title')"
-          >
-            <i class="mdi mdi-dots-vertical"></i>
-          </button>
-        </template>
-
-        <v-list density="compact" class="overflow-menu">
-          <v-list-subheader>{{ $t('toolbar.menu.game') }}</v-list-subheader>
-          <v-list-item
-            prepend-icon="mdi-pencil-box-outline"
-            :title="$t('toolbar.editPosition')"
-            :disabled="isMatchRunning"
-            @click="handleEditPosition"
-          />
-          <v-list-item
-            prepend-icon="mdi-content-save-outline"
-            :title="$t('toolbar.saveNotation')"
-            :disabled="isMatchRunning"
-            @click="handleSaveNotation"
-          />
-          <v-list-item
-            prepend-icon="mdi-folder-open-outline"
-            :title="$t('toolbar.openNotation')"
-            :disabled="isMatchRunning"
-            @click="handleOpenNotation"
-          />
-          <v-list-item
-            prepend-icon="mdi-clipboard-text-outline"
-            :title="$t('toolbar.viewPasteNotation')"
-            :disabled="isMatchRunning"
-            @click="showNotationTextDialog = true"
-          />
-
-          <v-divider class="my-1" />
-          <v-list-subheader>{{ $t('toolbar.menu.engine') }}</v-list-subheader>
-          <v-list-item
-            prepend-icon="mdi-cog-outline"
-            :title="$t('toolbar.uciSettings')"
-            :disabled="isAnalyzing || !!engineState.isPondering?.value"
-            @click="showUciOptionsDialog = true"
-          />
-          <v-list-item
-            prepend-icon="mdi-timer-outline"
-            :title="$t('toolbar.analysisParams')"
-            @click="showTimeDialog = true"
-          />
-          <v-list-item
-            prepend-icon="mdi-clipboard-pulse-outline"
-            :title="$t('toolbar.reviewAnalysis')"
-            :disabled="isMatchRunning || isAnalyzing"
-            @click="showReviewDialog = true"
-          />
-          <v-list-item
-            prepend-icon="mdi-ray-start-arrow"
-            :title="$t('toolbar.analyzeDrawings')"
-            :disabled="!isAnalyzeDrawingsAvailable"
-            @click="handleAnalyzeDrawings"
-          />
-
-          <v-divider class="my-1" />
-          <v-list-subheader>{{ $t('toolbar.menu.tools') }}</v-list-subheader>
-          <v-list-item
-            prepend-icon="mdi-book-open-variant"
-            :title="$t('toolbar.openingBook')"
-            @click="showOpeningBookDialog = true"
-          />
-
-          <v-divider class="my-1" />
-          <v-list-subheader>{{
-            $t('toolbar.menu.interface')
-          }}</v-list-subheader>
-          <v-list-item
-            prepend-icon="mdi-view-dashboard-outline"
-            :title="$t('toolbar.interfaceSettings')"
-            @click="showInterfaceSettingsDialog = true"
-          />
-          <v-list-item
-            :prepend-icon="darkMode ? 'mdi-weather-sunny' : 'mdi-weather-night'"
-            :title="darkMode ? $t('toolbar.lightMode') : $t('toolbar.darkMode')"
-            @click="toggleDarkMode"
-          >
-            <template #append>
-              <v-switch
-                :model-value="darkMode"
-                color="primary"
-                density="compact"
-                hide-details
-                class="menu-switch"
-                @update:model-value="toggleDarkMode"
-                @click.stop
-              />
-            </template>
-          </v-list-item>
-
-          <v-menu location="start" submenu open-on-hover>
-            <template #activator="{ props: langProps }">
-              <v-list-item
-                v-bind="langProps"
-                prepend-icon="mdi-translate"
-                :title="$t('languages.current')"
-                append-icon="mdi-chevron-right"
-              />
-            </template>
-            <v-list density="compact" class="lang-menu">
-              <v-list-item
-                v-for="(name, code) in availableLanguages"
-                :key="code"
-                :title="name"
-                :active="locale === code"
-                :lang="String(code)"
-                @click="changeLanguage(String(code))"
-              />
-            </v-list>
-          </v-menu>
-        </v-list>
-      </v-menu>
     </div>
 
     <!-- ── Row 2 · the seven primary actions ─────────────────────────── -->
@@ -258,6 +145,7 @@
     />
     <ReviewAnalysisDialog v-model="showReviewDialog" />
     <OpeningBookDialog v-model="showOpeningBookDialog" />
+    <LanguageDialog v-model="showLanguageDialog" />
   </header>
 </template>
 
@@ -273,9 +161,14 @@
   import OpeningBookDialog from './OpeningBookDialog.vue'
   import { useInterfaceSettings } from '../composables/useInterfaceSettings'
   import { useAutoPlay } from '../composables/useAutoPlay'
-  import { useConfigManager } from '../composables/useConfigManager'
+  import {
+    toggleDrawer,
+    registerDrawerActions,
+    asAction,
+  } from '../composables/useMainDrawer'
+  import LanguageDialog from './LanguageDialog.vue'
 
-  const { t, locale } = useI18n()
+  const { t } = useI18n()
   const gameState: any = inject('game-state')
   const engineState: any = inject('engine-state')
 
@@ -296,31 +189,8 @@
     moveNow,
   } = useAutoPlay()
 
-  /* ---------- Language submenu ---------- */
-  const configManager = useConfigManager()
-  const availableLanguages = computed(() => ({
-    zh_cn: t('languages.zh_cn'),
-    zh_tw: t('languages.zh_tw'),
-    en: t('languages.en'),
-    vi: t('languages.vi'),
-    ja: t('languages.ja'),
-    ko: t('languages.ko'),
-    ru: t('languages.ru'),
-    de: t('languages.de'),
-    fr: t('languages.fr'),
-    es: t('languages.es'),
-    th: t('languages.th'),
-    ms: t('languages.ms'),
-  }))
-
-  const changeLanguage = async (langCode: string) => {
-    locale.value = langCode
-    try {
-      await configManager.updateLocale(langCode)
-    } catch (e) {
-      console.warn('Failed to persist locale:', e)
-    }
-  }
+  /* ---------- Language ---------- */
+  const showLanguageDialog = ref(false)
 
   /* ---------- Engine status pill ---------- */
   const isEngineLoaded = computed(() => !!engineState.isEngineLoaded?.value)
@@ -406,9 +276,6 @@
       engineState.pvMoves?.value?.length > 0 &&
       engineState.pvMoves.value[0]
   )
-
-  // Enable drawings analysis only during analysis
-  const isAnalyzeDrawingsAvailable = computed(() => isAnalyzing.value)
 
   // Toggle dark mode function
   const toggleDarkMode = () => {
@@ -711,6 +578,34 @@
     // Callback after position editing is complete
   }
 
+  /* ---------- Drawer actions owned by the toolbar ---------- */
+  const copyCurrentFen = async () => {
+    try {
+      await navigator.clipboard.writeText(gameState.generateFen())
+    } catch {
+      // Clipboard access is denied in some webviews; the FEN box still works.
+      showNotationTextDialog.value = true
+    }
+  }
+
+  registerDrawerActions({
+    'edit-position': asAction(() => handleEditPosition()),
+    'save-notation': asAction(() => handleSaveNotation()),
+    'open-notation': asAction(() => handleOpenNotation()),
+    'notation-text': asAction(() => (showNotationTextDialog.value = true)),
+    'copy-fen': asAction(() => copyCurrentFen()),
+    'uci-options': asAction(() => (showUciOptionsDialog.value = true)),
+    'time-settings': asAction(() => (showTimeDialog.value = true)),
+    review: asAction(() => (showReviewDialog.value = true)),
+    'analyze-drawings': asAction(() => handleAnalyzeDrawings()),
+    'opening-book': asAction(() => (showOpeningBookDialog.value = true)),
+    'interface-settings': asAction(
+      () => (showInterfaceSettingsDialog.value = true)
+    ),
+    'dark-mode': asAction(() => toggleDarkMode()),
+    language: asAction(() => (showLanguageDialog.value = true)),
+  })
+
   // Clean up event listener when component is unmounted
   onUnmounted(() => {
     window.removeEventListener('force-stop-ai', resetVariationState)
@@ -718,23 +613,31 @@
 </script>
 
 <style lang="scss" scoped>
+  /* One row on phones: hamburger + the seven actions. The brand and engine
+     status live in the drawer header instead — at 412px there is not room for
+     both, and the seven actions are what gets used. */
   .top-toolbar {
-    position: sticky;
-    top: 0;
+    position: relative;
     z-index: var(--z-sticky);
-    padding-top: var(--safe-top);
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    height: calc(var(--toolbar-h) + var(--safe-top));
+    padding: var(--safe-top) var(--sp-1) 0;
     background: rgb(var(--c-surface));
     border-bottom: 1px solid rgb(var(--c-divider));
     box-shadow: var(--sh-1);
   }
 
-  /* ── Row 1 ───────────────────────────────────────────────────────── */
   .tbar {
+    flex: 0 0 auto;
     display: flex;
     align-items: center;
-    gap: var(--sp-2);
-    height: var(--toolbar-h);
-    padding: 0 var(--sp-2) 0 var(--sp-3);
+  }
+
+  .tbar .brand,
+  .tbar .engine-pill {
+    display: none;
   }
 
   .brand {
@@ -835,8 +738,8 @@
 
   .icon-btn {
     flex: 0 0 auto;
-    width: 36px;
-    height: 36px;
+    width: 40px;
+    height: 40px;
     display: grid;
     place-items: center;
     border: none;
@@ -858,11 +761,11 @@
 
   /* ── Row 2 — the seven primary actions ───────────────────────────── */
   .actions {
+    flex: 1;
+    min-width: 0;
     display: flex;
     align-items: stretch;
-    gap: 2px;
-    padding: var(--sp-1) var(--sp-2) var(--sp-2);
-    border-top: 1px solid rgb(var(--c-divider) / 0.6);
+    gap: 1px;
     overflow-x: auto;
     scrollbar-width: none;
 
@@ -873,8 +776,8 @@
 
   .act {
     flex: 1 1 0;
-    min-width: 52px;
-    height: 50px;
+    min-width: 46px;
+    height: calc(var(--toolbar-h) - 4px);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -969,44 +872,11 @@
     }
   }
 
-  /* ── Overflow menu ───────────────────────────────────────────────── */
-  :deep(.overflow-menu) {
-    min-width: 232px;
-    max-height: min(70vh, 560px);
-    overflow-y: auto;
-  }
-
-  :deep(.overflow-menu .v-list-subheader) {
-    font-size: var(--fs-micro);
-    font-weight: var(--fw-semibold);
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: rgb(var(--c-text-3));
-    min-height: 32px;
-  }
-
-  :deep(.lang-menu) {
-    min-width: 160px;
-    max-height: 60vh;
-    overflow-y: auto;
-  }
-
-  :deep(.menu-switch) {
-    flex: 0 0 auto;
-    margin: 0;
-
-    .v-selection-control {
-      min-height: 0;
-    }
-  }
-
   /* ── Desktop: collapse the two rows into one ─────────────────────── */
   @media (min-width: 900px) {
     .top-toolbar {
-      display: flex;
-      align-items: center;
       gap: var(--sp-4);
-      padding: var(--sp-2) var(--sp-4);
+      padding: 0 var(--sp-4);
       height: 64px;
     }
 
@@ -1015,6 +885,15 @@
       height: auto;
       padding: 0;
       gap: var(--sp-3);
+    }
+
+    .tbar .brand,
+    .tbar .engine-pill {
+      display: flex;
+    }
+
+    .engine-pill {
+      display: inline-flex;
     }
 
     .brand {

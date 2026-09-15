@@ -76,6 +76,38 @@ export default {
   },
 
   // UCI options dialog
+
+  // Bottom deck
+  deck: {
+    analysis: 'Analysis',
+    book: 'Opening book',
+    nav: 'Moves',
+    standard: 'Standard',
+    compact: 'Compact',
+    empty: 'Nothing to show',
+  },
+  // Bottom navigation bar
+  navbar: {
+    first: 'Go to start',
+    prev: 'Previous move',
+    next: 'Next move',
+    last: 'Go to end',
+    undo: 'Undo move',
+    play: 'Auto replay',
+    flip: 'Flip board',
+    note: 'Annotate move',
+    maximise: 'Maximise board',
+  },
+  // Left drawer
+  drawer: {
+    close: 'Close menu',
+    groupGame: 'Game',
+    groupPanels: 'Panels',
+    groupEngine: 'Engine',
+    groupTools: 'Tools',
+    groupInterface: 'Interface',
+  },
+
   uciOptions: {
     title: 'UCI Engine Options',
     loadingText: 'Loading engine options...',
@@ -362,6 +394,14 @@ prev.prev - Previous-previous move (supports infinite nesting)`,
     panels: 'Panels',
     collapseAll: 'Collapse all',
     expandAll: 'Expand all',
+
+    // Face-down piece strip (middle of the main screen)
+    pool: {
+      title: 'Hidden',
+      red: 'R',
+      black: 'B',
+      toggleHint: 'Tap to fold or unfold the hidden-piece strip',
+    },
     restorePanels: 'Restore Panels Layout',
     flipBoard: 'Flip Board',
     flipBoardBack: 'Restore',

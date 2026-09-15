@@ -74,6 +74,37 @@ export default {
     },
   },
 
+  // 底部标签区
+  deck: {
+    analysis: '分析',
+    book: '开局库',
+    nav: '导航',
+    standard: '标准',
+    compact: '精简',
+    empty: '暂无内容',
+  },
+  // 底部操作条
+  navbar: {
+    first: '回到开局',
+    prev: '上一步',
+    next: '下一步',
+    last: '跳到最后',
+    undo: '悔棋',
+    play: '自动回放',
+    flip: '翻转棋盘',
+    note: '标注走法',
+    maximise: '棋盘最大化',
+  },
+  // 左侧抽屉
+  drawer: {
+    close: '关闭菜单',
+    groupGame: '棋局',
+    groupPanels: '面板',
+    groupEngine: '引擎',
+    groupTools: '工具',
+    groupInterface: '界面',
+  },
+
   // UCI选项对话框
   uciOptions: {
     title: 'UCI引擎选项',
@@ -356,6 +387,14 @@ prev.prev - 上上步（支持无限嵌套）`,
     panels: '面板',
     collapseAll: '全部收起',
     expandAll: '全部展开',
+
+    // 暗子区（主界面中下部）
+    pool: {
+      title: '暗子',
+      red: '红',
+      black: '黑',
+      toggleHint: '点击收起 / 展开暗子区',
+    },
     restorePanels: '恢复面板布局',
     flipBoard: '翻转棋盘',
     flipBoardBack: '恢复方向',

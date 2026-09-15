@@ -1,0 +1,220 @@
+/**
+ * Design tokens — single source of truth for the whole UI.
+ *
+ * Rules of the house:
+ *  - Every colour, radius, space, shadow and font size used in the app must come
+ *    from here. No ad-hoc hex values in components.
+ *  - Colours are stored as raw channels ("20 102 92") so they compose with
+ *    `rgb(var(--c-xxx) / <alpha>)` and still work in every browser we ship to.
+ *  - Vuetify theme variables (`--v-theme-*`) are re-derived from these so MDI /
+ *    Vuetify components inherit the same palette automatically.
+ */
+
+/* ------------------------------------------------------------------ *
+ * Light theme — warm paper. The board is the hero, the chrome recedes.
+ * ------------------------------------------------------------------ */
+:root {
+  /* Surfaces */
+  --c-bg: 242 240 235; /* app background, warm paper */
+  --c-bg-sunken: 233 230 223; /* recessed wells (board frame gap) */
+  --c-surface: 255 255 255; /* cards, sheets, menus */
+  --c-surface-2: 249 248 245; /* subtle raised rows inside a card */
+  --c-surface-3: 238 235 229; /* hover / pressed states */
+  --c-overlay: 28 27 26;
+
+  /* Text */
+  --c-text: 28 27 26; /* primary copy */
+  --c-text-2: 107 103 95; /* labels, secondary */
+  --c-text-3: 154 149 140; /* hints, disabled */
+  --c-on-accent: 255 255 255;
+
+  /* Lines */
+  --c-border: 224 219 210; /* stray hairlines */
+  --c-divider: 233 229 221; /* list separators */
+  --c-outline: 205 199 188; /* input strokes */
+
+  /* Brand — ink green: calm, reads as "analytical", clashes with neither
+     the red nor the black army on the board. */
+  --c-primary: 20 102 92;
+  --c-primary-strong: 13 79 71;
+  --c-primary-soft: 228 239 236;
+  --c-primary-text: 12 74 66;
+
+  /* Accent — warm amber, echoes the board's wood. Reserved for
+     "it is your move" / engine suggestion moments. */
+  --c-accent: 180 118 31;
+  --c-accent-soft: 250 240 222;
+
+  /* Status */
+  --c-danger: 179 57 47;
+  --c-danger-soft: 251 233 231;
+  --c-success: 63 125 69;
+  --c-success-soft: 231 241 232;
+  --c-info: 42 111 151;
+  --c-info-soft: 229 239 245;
+  --c-warning: 180 118 31;
+  --c-warning-soft: 250 240 222;
+
+  /* Board pieces (kept in sync with the SVGs) */
+  --c-side-red: 178 45 38;
+  --c-side-black: 38 38 40;
+
+  /* Elevation — three steps only. Everything is flat until it floats. */
+  --sh-1: 0 1px 2px rgb(28 27 26 / 0.06), 0 1px 1px rgb(28 27 26 / 0.04);
+  --sh-2: 0 2px 8px rgb(28 27 26 / 0.08), 0 1px 2px rgb(28 27 26 / 0.04);
+  --sh-3: 0 10px 28px rgb(28 27 26 / 0.14), 0 2px 6px rgb(28 27 26 / 0.06);
+
+  /* Scrim behind sheets & dialogs */
+  --scrim: rgb(28 27 26 / 0.42);
+
+  color-scheme: light;
+}
+
+/* ------------------------------------------------------------------ *
+ * Dark theme — layered charcoal, not pure black.
+ * ------------------------------------------------------------------ */
+.v-theme--dark,
+[data-theme='dark'] {
+  --c-bg: 18 20 23;
+  --c-bg-sunken: 13 15 17;
+  --c-surface: 26 29 33;
+  --c-surface-2: 32 36 41;
+  --c-surface-3: 41 45 51;
+  --c-overlay: 0 0 0;
+
+  --c-text: 232 230 225;
+  --c-text-2: 157 163 171;
+  --c-text-3: 110 116 124;
+  --c-on-accent: 18 20 23;
+
+  --c-border: 44 49 56;
+  --c-divider: 38 42 48;
+  --c-outline: 62 68 76;
+
+  --c-primary: 79 168 148;
+  --c-primary-strong: 111 194 175;
+  --c-primary-soft: 26 47 44;
+  --c-primary-text: 126 205 187;
+
+  --c-accent: 217 164 65;
+  --c-accent-soft: 51 42 24;
+
+  --c-danger: 224 107 95;
+  --c-danger-soft: 58 31 29;
+  --c-success: 107 175 115;
+  --c-success-soft: 29 46 32;
+  --c-info: 95 168 211;
+  --c-info-soft: 25 42 54;
+  --c-warning: 217 164 65;
+  --c-warning-soft: 51 42 24;
+
+  --c-side-red: 214 96 88;
+  --c-side-black: 200 200 205;
+
+  --sh-1: 0 1px 2px rgb(0 0 0 / 0.4);
+  --sh-2: 0 2px 10px rgb(0 0 0 / 0.45);
+  --sh-3: 0 12px 32px rgb(0 0 0 / 0.55);
+
+  --scrim: rgb(0 0 0 / 0.6);
+
+  color-scheme: dark;
+}
+
+/* ------------------------------------------------------------------ *
+ * Non-colour scales — theme independent.
+ * ------------------------------------------------------------------ */
+:root {
+  /* Space — 4px rhythm */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+
+  /* Radius */
+  --r-xs: 4px;
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 22px;
+  --r-pill: 999px;
+
+  /* Type scale */
+  --fs-micro: 11px;
+  --fs-sm: 12px;
+  --fs-base: 13px;
+  --fs-md: 15px;
+  --fs-lg: 17px;
+  --fs-xl: 20px;
+  --fs-2xl: 24px;
+
+  --lh-tight: 1.25;
+  --lh-base: 1.5;
+
+  --fw-normal: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+
+  /* Touch targets — Android asks for 48dp, 44 is our hard floor. */
+  --tap-min: 44px;
+  --tap-comfortable: 48px;
+
+  /* Motion */
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 320ms;
+  --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+
+  /* Layout */
+  --toolbar-h: 48px;
+  --actionbar-h: 56px;
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-top: env(safe-area-inset-top, 0px);
+
+  --z-board: 1;
+  --z-sticky: 20;
+  --z-sheet: 1200;
+  --z-toast: 2400;
+}
+
+/* ------------------------------------------------------------------ *
+ * Bridge into Vuetify so its own components follow the same palette.
+ * ------------------------------------------------------------------ */
+:root,
+.v-theme--light {
+  --v-theme-primary: var(--c-primary);
+  --v-theme-secondary: 90 107 102;
+  --v-theme-accent: var(--c-accent);
+  --v-theme-error: var(--c-danger);
+  --v-theme-info: var(--c-info);
+  --v-theme-success: var(--c-success);
+  --v-theme-warning: var(--c-warning);
+  --v-theme-background: var(--c-bg);
+  --v-theme-surface: var(--c-surface);
+  --v-theme-on-background: var(--c-text);
+  --v-theme-on-surface: var(--c-text);
+  --v-theme-surface-variant: 231 227 219;
+  --v-theme-on-surface-variant: var(--c-text-2);
+  --v-theme-outline: var(--c-outline);
+}
+
+.v-theme--dark {
+  --v-theme-primary: var(--c-primary);
+  --v-theme-secondary: 143 163 157;
+  --v-theme-accent: var(--c-accent);
+  --v-theme-error: var(--c-danger);
+  --v-theme-info: var(--c-info);
+  --v-theme-success: var(--c-success);
+  --v-theme-warning: var(--c-warning);
+  --v-theme-background: var(--c-bg);
+  --v-theme-surface: var(--c-surface);
+  --v-theme-on-background: var(--c-text);
+  --v-theme-on-surface: var(--c-text);
+  --v-theme-surface-variant: 38 42 48;
+  --v-theme-on-surface-variant: var(--c-text-2);
+  --v-theme-outline: var(--c-outline);
+}

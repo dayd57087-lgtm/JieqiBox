@@ -43,6 +43,36 @@ export default {
     viewPasteNotation: 'View/Paste Notation',
     reviewAnalysis: 'Review Analysis',
     openingBook: 'Opening Book',
+
+    // Primary action bar — labels kept deliberately short so all seven fit
+    // on a phone screen without wrapping.
+    core: {
+      newGame: 'New',
+      redComputer: 'Red',
+      blackComputer: 'Black',
+      analyze: 'Analyze',
+      stop: 'Stop',
+      moveNow: 'Move',
+      moveNowHint: 'Play the best move right now',
+      variation: 'Alt',
+      flip: 'Flip',
+    },
+    // Overflow menu section headings
+    menu: {
+      title: 'More actions',
+      game: 'Game',
+      engine: 'Engine',
+      tools: 'Tools',
+      interface: 'Interface',
+    },
+    // Engine status indicator
+    engine: {
+      none: 'No engine',
+      loading: 'Loading',
+      stopping: 'Stopping',
+      thinking: 'Thinking',
+      ready: 'Ready',
+    },
   },
 
   // UCI options dialog
@@ -327,6 +357,11 @@ prev.prev - Previous-previous move (supports infinite nesting)`,
     about: 'About',
     undockPanel: 'Undock Panel',
     dockPanel: 'Dock Panel',
+    expandPanel: 'Expand panel',
+    collapsePanel: 'Collapse panel',
+    panels: 'Panels',
+    collapseAll: 'Collapse all',
+    expandAll: 'Expand all',
     restorePanels: 'Restore Panels Layout',
     flipBoard: 'Flip Board',
     flipBoardBack: 'Restore',

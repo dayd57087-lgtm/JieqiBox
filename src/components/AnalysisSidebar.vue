@@ -1,5 +1,28 @@
 <template>
   <div class="sidebar">
+    <!-- Panel rail — phones only. Six expanded panels are a very long scroll;
+         this folds them all in one tap. -->
+    <div class="panel-rail">
+      <span class="panel-rail__label">
+        <i class="mdi mdi-view-column-outline"></i>
+        {{ $t('analysis.panels') }}
+      </span>
+      <button
+        type="button"
+        class="panel-rail__btn"
+        @click="foldAllPanels(true)"
+      >
+        {{ $t('analysis.collapseAll') }}
+      </button>
+      <button
+        type="button"
+        class="panel-rail__btn"
+        @click="foldAllPanels(false)"
+      >
+        {{ $t('analysis.expandAll') }}
+      </button>
+    </div>
+
     <!-- Engine Management Section -->
     <div class="engine-management">
       <v-select
@@ -57,8 +80,13 @@
       </v-btn>
     </div>
 
-    <!-- Analysis control and execution button group -->
-    <div v-if="!isMatchMode && !isHumanVsAiMode" class="button-group">
+    <!-- Analysis control and execution button group.
+         Hidden on phones: the toolbar owns these now, and repeating them here
+         only pushes the board further up the scroll. -->
+    <div
+      v-if="!isMatchMode && !isHumanVsAiMode"
+      class="button-group hide-on-mobile"
+    >
       <v-btn
         @click="handleAnalysisButtonClick"
         :disabled="!isEngineLoaded"
@@ -173,7 +201,7 @@
       <v-btn
         @click="toggleBoardFlip()"
         color="cyan"
-        class="grouped-btn"
+        class="grouped-btn hide-on-mobile"
         size="small"
       >
         {{
@@ -184,8 +212,12 @@
       </v-btn>
     </div>
 
-    <!-- AI auto-play settings - Disabled when engine is not loaded or during manual analysis -->
-    <div v-if="!isMatchMode && !isHumanVsAiMode" class="autoplay-settings">
+    <!-- AI auto-play settings - Disabled when engine is not loaded or during manual analysis.
+         Hidden on phones: the toolbar switches drive the same state. -->
+    <div
+      v-if="!isMatchMode && !isHumanVsAiMode"
+      class="autoplay-settings hide-on-mobile"
+    >
       <v-btn
         @click="toggleRedAi"
         :color="isRedAi ? 'error' : 'blue-grey-darken-1'"
@@ -206,8 +238,9 @@
       </v-btn>
     </div>
 
-    <!-- Panel Layout Control -->
-    <div class="button-group">
+    <!-- Panel Layout Control — desktop only; there is no panel dragging on a
+         phone, so "restore layout" has nothing to restore. -->
+    <div class="button-group hide-on-mobile">
       <v-btn
         @click="restoreDefaultLayout"
         color="grey"
@@ -1047,6 +1080,8 @@
   import { uciToChineseMoves } from '@/utils/chineseNotation'
   import { useGameSettings } from '@/composables/useGameSettings'
   import { useHumanVsAiSettings } from '@/composables/useHumanVsAiSettings'
+  import { useAutoPlay, registerAutoPlayActions } from '@/composables/useAutoPlay'
+  import { foldAllPanels } from '@/composables/usePanelFold'
   import AboutDialog from './AboutDialog.vue'
   // Import Engine Manager components and types
   import EngineManagerDialog from './EngineManagerDialog.vue'
@@ -1212,9 +1247,10 @@
   })
 
   /* ---------- Auto Play ---------- */
-  const isRedAi = ref(false)
-  const isBlackAi = ref(false)
-  const isManualAnalysis = ref(false) // Track if current analysis is manual or AI auto-play
+  // These live in a module-level singleton so TopToolbar's switches and the
+  // ones in this panel are literally the same state. See
+  // composables/useAutoPlay.ts.
+  const { isRedAi, isBlackAi, isManualAnalysis } = useAutoPlay() // isManualAnalysis: manual (infinite) analysis blocks auto-play
 
   // Persist analysis-time context to ensure stable PV-to-Chinese conversion
   const lastAnalysisFen = ref<string>('') // Jieqi/UI FEN captured at analysis start
@@ -1725,6 +1761,44 @@
       manualStartAnalysis()
     }
   }
+
+  /**
+   * Commit the engine to a move right now.
+   *
+   * Backs the toolbar's 「立即出步」 action. Three cases, in order:
+   *   1. pondering — promote the ponder into a real move;
+   *   2. thinking  — stop and play the best move found so far;
+   *   3. idle, but a best move is already known — walk it straight away.
+   * Any manual analysis is ended first: it exists to inspect, not to play.
+   */
+  function moveNow() {
+    if (!isEngineLoaded.value || isMatchRunning.value) return
+
+    isManualAnalysis.value = false
+
+    if (isPondering.value) {
+      stopPonder({ playBestMoveOnStop: true })
+      return
+    }
+
+    if (isThinking.value) {
+      stopAnalysis({ playBestMoveOnStop: true })
+      return
+    }
+
+    // Engine is idle but already has a verdict — just play it.
+    const uci = bestMove.value
+    if (uci) playMoveFromUci(uci)
+  }
+
+  // Hand the toolbar the same actions this panel uses, so both surfaces drive
+  // one implementation instead of two that drift apart.
+  registerAutoPlayActions({
+    toggleRedAi,
+    toggleBlackAi,
+    toggleAnalysis: handleAnalysisButtonClick,
+    moveNow,
+  })
 
   function manualStartAnalysis() {
     // Manual analysis uses infinite thinking mode without time, depth, or node limits
@@ -3414,26 +3488,74 @@
     height: calc(
       100vh - 120px
     ); /* Adjusted to account for toolbar and padding */
-    padding: 12px;
+    padding: var(--sp-3);
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--sp-3);
     box-sizing: border-box;
-    border-left: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+    border-left: 1px solid rgb(var(--c-divider));
     overflow-y: auto;
-    background-color: rgb(var(--v-theme-surface));
+    background-color: rgb(var(--c-bg));
 
-    // Mobile responsive adjustments
+    // Mobile: the sidebar is no longer a rail beside the board — it becomes
+    // the page below it, and the panels carry the card chrome instead.
     @media (max-width: 768px) {
       width: 100%;
-      max-width: 500px;
+      max-width: none;
       height: auto;
-      max-height: 60vh;
+      max-height: none;
       border-left: none;
-      border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-      margin-top: 20px;
-      padding: 10px;
-      gap: 6px;
+      border-top: none;
+      margin-top: var(--sp-2);
+      padding: var(--sp-3);
+      gap: var(--sp-3);
+    }
+  }
+
+  /* ---------- Panel rail (mobile only) ---------- */
+  .panel-rail {
+    display: none;
+  }
+
+  @media (max-width: 768px) {
+    .panel-rail {
+      display: flex;
+      align-items: center;
+      gap: var(--sp-2);
+      padding: 0 var(--sp-1);
+      margin-bottom: calc(var(--sp-1) * -1);
+    }
+
+    .panel-rail__label {
+      flex: 1;
+      display: inline-flex;
+      align-items: center;
+      gap: var(--sp-1);
+      font-size: var(--fs-micro);
+      font-weight: var(--fw-semibold);
+      letter-spacing: 0.04em;
+      color: rgb(var(--c-text-3));
+      text-transform: uppercase;
+    }
+
+    .panel-rail__btn {
+      height: 32px;
+      padding: 0 var(--sp-3);
+      border: 1px solid rgb(var(--c-border));
+      border-radius: var(--r-pill);
+      background: rgb(var(--c-surface));
+      color: rgb(var(--c-text-2));
+      font-size: var(--fs-sm);
+      font-weight: var(--fw-medium);
+      cursor: pointer;
+      transition:
+        background var(--dur-fast) var(--ease-out),
+        color var(--dur-fast) var(--ease-out);
+    }
+
+    .panel-rail__btn:active {
+      background: rgb(var(--c-surface-3));
+      color: rgb(var(--c-text));
     }
   }
 
@@ -3498,33 +3620,37 @@
       font-size: 11px;
     }
   }
+  /* The card chrome for a docked panel now lives in DraggablePanel.vue, so
+     this rule only shapes the section heading itself. */
   .section {
-    padding-top: 6px;
-    border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+    padding-top: 0;
+    border-top: none;
   }
   .section h3,
   .section-title {
-    margin: 0 0 6px;
-    padding-bottom: 3px;
-    font-size: 0.9rem;
+    margin: 0 0 var(--sp-2);
+    padding-bottom: 0;
+    font-size: var(--fs-sm);
+    font-weight: var(--fw-semibold);
     display: flex;
     justify-content: space-between;
     align-items: center;
   }
   .analysis-output,
   .move-list {
-    padding: 10px;
-    border-radius: 5px;
+    padding: var(--sp-2) var(--sp-3);
+    border-radius: var(--r-sm);
     height: 150px;
     overflow-y: auto;
-    font-family: 'Courier New', Courier, monospace;
-    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-    font-size: 13px;
+    font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    border: 1px solid rgb(var(--c-border));
+    background: rgb(var(--c-surface-2));
+    font-size: var(--fs-base);
 
     // Mobile responsive adjustments
     @media (max-width: 768px) {
-      height: 120px;
-      font-size: 12px;
+      height: 140px;
+      font-size: var(--fs-base);
     }
   }
 
@@ -3546,11 +3672,11 @@
   .analysis-card {
     display: flex;
     flex-direction: column;
-    gap: 12px;
-    padding: 12px;
-    border-radius: 8px;
-    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-    background: rgba(var(--v-theme-surface), 0.6);
+    gap: var(--sp-3);
+    padding: var(--sp-3);
+    border-radius: var(--r-sm);
+    border: 1px solid rgb(var(--c-border));
+    background: rgb(var(--c-surface-2));
   }
 
   .analysis-core {

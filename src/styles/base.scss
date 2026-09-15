@@ -1,0 +1,232 @@
+/**
+ * Global base layer.
+ *
+ * Everything in here sets the *defaults* for Vuetify primitives so individual
+ * components no longer re-state border-radius / elevation / tap size by hand.
+ *
+ * On `!important`: Vuetify ships its own single-class rules, and which of the
+ * two wins otherwise depends on stylesheet injection order — which differs
+ * between `vite dev` and a production build. Since this file is the design
+ * system's enforcement layer (not a component override), it declares its
+ * intent explicitly instead of relying on load order. Add `!important` here
+ * and nowhere else.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background-color: rgb(var(--c-bg)) !important;
+  color: rgb(var(--c-text));
+  font-size: var(--fs-md);
+  line-height: var(--lh-base);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overscroll-behavior-y: none;
+}
+
+body {
+  transition: background-color var(--dur-base) var(--ease-out);
+}
+
+#app {
+  min-height: 100vh;
+}
+
+/* Disable the blue tap flash everywhere; we draw our own states. */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Keyboard focus should still be obvious. */
+:focus-visible {
+  outline: 2px solid rgb(var(--c-primary));
+  outline-offset: 2px;
+  border-radius: var(--r-xs);
+}
+
+/* Quiet scrollbars — panels scroll, the chrome shouldn't shout. */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--c-text-3) / 0.35);
+  border-radius: var(--r-pill);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--c-text-3) / 0.6);
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ------------------------------------------------------------------ *
+ * Vuetify surface defaults — one radius system, one elevation system.
+ * ------------------------------------------------------------------ */
+
+/* This app does not mount <v-app> — Vuetify's theme class only lands on
+   individual components. Paint the app shell from our own tokens instead. */
+#app,
+.app-container {
+  background: rgb(var(--c-bg)) !important;
+  color: rgb(var(--c-text));
+  min-height: 100vh;
+  font-family: inherit !important;
+}
+
+/* Buttons: subtle radius, no stock elevation, honest press state. */
+.v-btn {
+  border-radius: var(--r-sm) !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+  font-weight: var(--fw-medium);
+  box-shadow: none !important;
+}
+
+.v-btn:not(.v-btn--disabled):active {
+  transform: translateY(1px);
+}
+
+/* Cards carry the app's body — one radius, one shadow level. */
+.v-card {
+  border-radius: var(--r-md) !important;
+  box-shadow: var(--sh-2) !important;
+}
+
+.v-card--flat {
+  box-shadow: none !important;
+}
+
+/* Sheets: bottom drawers anchor to the bottom edge as slabs. */
+.v-bottom-sheet > .v-overlay__content > .v-sheet,
+.v-bottom-sheet > .v-overlay__content {
+  border-radius: var(--r-lg) var(--r-lg) 0 0 !important;
+}
+
+.v-dialog > .v-overlay__content > .v-sheet {
+  border-radius: var(--r-lg) !important;
+  box-shadow: var(--sh-3) !important;
+}
+
+.v-menu > .v-overlay__content > .v-sheet,
+.v-menu > .v-overlay__content > .v-list {
+  border-radius: var(--r-md) !important;
+  box-shadow: var(--sh-3) !important;
+}
+
+.v-navigation-drawer,
+.v-navigation-drawer__content {
+  background: rgb(var(--c-surface)) !important;
+}
+
+.v-overlay__scrim {
+  background: var(--scrim) !important;
+}
+
+/* Inputs: consistent outline stroke and radius. */
+.v-field {
+  border-radius: var(--r-sm) !important;
+}
+
+.v-field--variant-outlined .v-field__outline {
+  color: rgb(var(--c-outline));
+}
+
+.v-field--focused .v-field__outline {
+  color: rgb(var(--c-primary));
+}
+
+/* Lists: roomier rows, quieter chrome. */
+.v-list {
+  background: transparent !important;
+  padding: var(--sp-1);
+}
+
+.v-list-item {
+  border-radius: var(--r-sm);
+}
+
+.v-list-item-title {
+  font-size: var(--fs-base);
+}
+
+.v-divider {
+  border-color: rgb(var(--c-divider)) !important;
+  opacity: 1 !important;
+}
+
+.v-chip {
+  border-radius: var(--r-pill) !important;
+  font-weight: var(--fw-medium);
+}
+
+.v-slider__track-background {
+  opacity: 0.25;
+}
+
+/* Tooltips are unreadable at default contrast on a busy board — give them a
+   solid bed. */
+.v-tooltip > .v-overlay__content {
+  background: rgb(var(--c-text) / 0.92) !important;
+  color: rgb(var(--c-bg)) !important;
+  border-radius: var(--r-sm) !important;
+  padding: var(--sp-1) var(--sp-2);
+  font-size: var(--fs-sm);
+  opacity: 1 !important;
+}
+
+/* ------------------------------------------------------------------ *
+ * Mobile ergonomics.
+ * ------------------------------------------------------------------ */
+@media (max-width: 768px) {
+  /* Utility: drop a control that a phone has no room for, or that is already
+     reachable from the toolbar. */
+  .hide-on-mobile {
+    display: none !important;
+  }
+
+  /* Every control clears the tap floor. Visual size can stay small via
+     padding; the hit box is what matters. */
+  .v-btn {
+    min-height: var(--tap-min) !important;
+  }
+
+  .v-btn--size-small,
+  .v-btn--size-x-small {
+    min-width: var(--tap-min);
+  }
+
+  .v-list-item {
+    min-height: var(--tap-comfortable);
+  }
+
+  /* Never let a long press start a text selection in the chrome. */
+  .v-toolbar,
+  .v-btn,
+  .v-list-item,
+  .v-tabs,
+  .v-tab {
+    user-select: none;
+    -webkit-user-select: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

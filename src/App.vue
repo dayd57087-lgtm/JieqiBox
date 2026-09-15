@@ -30,6 +30,15 @@
     darkMode,
     newDarkMode => {
       theme.global.name.value = newDarkMode ? 'dark' : 'light'
+
+      // Vuetify puts `.v-theme--dark` on `.v-application`, which is *inside*
+      // <body>. Our own tokens paint <body> and <html>, so they would keep
+      // reading the light values. Mirror the flag onto <html> to switch the
+      // whole tree in one go.
+      document.documentElement.dataset.theme = newDarkMode ? 'dark' : 'light'
+      document.documentElement.style.colorScheme = newDarkMode
+        ? 'dark'
+        : 'light'
     },
     { immediate: true }
   )
@@ -151,23 +160,23 @@
     justify-content: center;
     flex: 1;
     width: 100%;
-    padding: 20px;
-    gap: 20px;
+    padding: var(--sp-5);
+    gap: var(--sp-5);
     box-sizing: border-box;
-    background-color: rgb(var(--v-theme-background));
+    background-color: rgb(var(--c-bg));
     max-height: calc(
       100vh - 80px
     ); /* Prevent layout from exceeding viewport height */
     overflow: hidden; /* Prevent scrolling when content fits */
 
-    // Mobile responsive layout - switch to vertical on narrow screens
+    // Mobile: the board and the analysis panels stack into one scrolling page.
     @media (max-width: 768px) {
       flex-direction: column;
-      align-items: center;
-      padding: 10px;
-      gap: 15px; // Reduced gap for mobile
-      max-height: none; /* Allow natural height on mobile */
-      overflow: visible; /* Allow scrolling on mobile if needed */
+      align-items: stretch;
+      padding: 0 var(--sp-3) var(--sp-4);
+      gap: 0;
+      max-height: none;
+      overflow: visible;
     }
   }
 
@@ -175,7 +184,7 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding-top: 20px;
+    padding-top: var(--sp-4);
     max-height: 100%; /* Ensure it doesn't exceed parent height */
 
     // On desktop, when position chart is shown, make chessboard smaller

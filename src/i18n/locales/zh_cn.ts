@@ -43,6 +43,35 @@ export default {
     viewPasteNotation: '查看/输入棋谱',
     reviewAnalysis: '复盘分析',
     openingBook: '开局库',
+
+    // 主操作条 —— 手机优先，标签刻意保持极短（一屏放得下七个）
+    core: {
+      newGame: '新局',
+      redComputer: '红电脑',
+      blackComputer: '黑电脑',
+      analyze: '分析',
+      stop: '停止',
+      moveNow: '出步',
+      moveNowHint: '立即出步（按当前最佳着法走子）',
+      variation: '变招',
+      flip: '翻转',
+    },
+    // 溢出菜单的分组标题
+    menu: {
+      title: '更多操作',
+      game: '棋局',
+      engine: '引擎',
+      tools: '工具',
+      interface: '界面',
+    },
+    // 引擎状态指示
+    engine: {
+      none: '未加载引擎',
+      loading: '加载中',
+      stopping: '正在停止',
+      thinking: '思考中',
+      ready: '引擎就绪',
+    },
   },
 
   // UCI选项对话框
@@ -322,6 +351,11 @@ prev.prev - 上上步（支持无限嵌套）`,
     about: '关于',
     undockPanel: '取消停靠面板',
     dockPanel: '停靠面板',
+    expandPanel: '展开面板',
+    collapsePanel: '收起面板',
+    panels: '面板',
+    collapseAll: '全部收起',
+    expandAll: '全部展开',
     restorePanels: '恢复面板布局',
     flipBoard: '翻转棋盘',
     flipBoardBack: '恢复方向',

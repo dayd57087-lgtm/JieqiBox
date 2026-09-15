@@ -12,6 +12,12 @@ import '@mdi/font/css/materialdesignicons.css' // Import MDI icon styles
 import i18n from './i18n'
 import { usePanelManager } from './composables/usePanelManager'
 
+// Design system — must load after `vuetify/styles` so our token layer and
+// component defaults win over Vuetify's stock MD3 values.
+import './styles/tokens.scss'
+import './styles/base.scss'
+import { LIGHT_THEME_COLORS, DARK_THEME_COLORS } from './styles/theme'
+
 const vuetify = createVuetify({
   components,
   directives,
@@ -24,37 +30,11 @@ const vuetify = createVuetify({
     themes: {
       light: {
         dark: false,
-        colors: {
-          primary: '#1976D2',
-          secondary: '#424242',
-          accent: '#82B1FF',
-          error: '#FF5252',
-          info: '#2196F3',
-          success: '#4CAF50',
-          warning: '#FF9800',
-          background: '#F5F5F5',
-          surface: '#FFFFFF',
-          button: '#FFFFFF',
-          'on-background': '#000000',
-          'on-surface': '#000000',
-        },
+        colors: LIGHT_THEME_COLORS,
       },
       dark: {
         dark: true,
-        colors: {
-          primary: '#2196F3',
-          secondary: '#424242',
-          accent: '#FF4081',
-          error: '#FF5252',
-          info: '#2196F3',
-          success: '#4CAF50',
-          warning: '#FF9800',
-          background: '#202020',
-          surface: '#121212',
-          button: '#1A1A1A',
-          'on-background': '#FFFFFF',
-          'on-surface': '#FFFFFF',
-        },
+        colors: DARK_THEME_COLORS,
       },
     },
   },

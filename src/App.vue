@@ -12,6 +12,7 @@
 
   import { useChessGame } from './composables/useChessGame'
   import { useBoardViewState } from './composables/useBoardViewState'
+  import { registerBoardFit, requestBoardFit } from './composables/useBoardFit'
   import { useUciEngine } from './composables/useUciEngine'
   import { useJaiEngine } from './composables/useJaiEngine'
   import { useInterfaceSettings } from './composables/useInterfaceSettings'
@@ -104,6 +105,19 @@
   const boardAreaEl = ref<HTMLElement | null>(null)
   let boardObserver: ResizeObserver | null = null
 
+  /**
+   * A *function* ref rather than `ref="boardAreaEl"`.
+   *
+   * With the string form under `<script setup>`, Vue assigns the element into
+   * setupState under that name — overwriting the ref object itself. That left
+   * `boardAreaEl.value` undefined, so `fitBoard` returned immediately on every
+   * call and the board was never sized by height at all; it only ever looked
+   * right because the fallback `width: 100%` happened to fit.
+   */
+  const setBoardAreaEl = (el: unknown) => {
+    boardAreaEl.value = (el as HTMLElement) ?? null
+  }
+
   const fitBoard = () => {
     const el = boardAreaEl.value
     if (!el) return
@@ -113,23 +127,43 @@
     const availH =
       el.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom)
     if (availW <= 0 || availH <= 0) return
+    // The board is a fixed 9:10 rectangle, so the smaller of the two axes wins.
     el.style.setProperty(
       '--board-w',
       `${Math.floor(Math.min(availW, (availH * 9) / 10))}px`
     )
   }
 
-  watch([boardMaximised, showPositionChart], () =>
-    requestAnimationFrame(fitBoard)
-  )
+  // Let the deck and the piece strip ask for a re-measure directly; see
+  // useBoardFit for why the ResizeObserver alone is not enough.
+  registerBoardFit(fitBoard)
+
+  // Attach the observer as soon as the element exists, and re-fit whenever the
+  // layout changes underneath it (deck dragged, pool folded, board maximised).
+  const attachBoardObserver = () => {
+    const el = boardAreaEl.value
+    if (!el) return
+    boardObserver?.disconnect()
+    boardObserver = new ResizeObserver(fitBoard)
+    boardObserver.observe(el)
+    fitBoard()
+  }
+
+  watch(boardAreaEl, () => attachBoardObserver())
+
+  watch([boardMaximised, showPositionChart], () => requestBoardFit())
 
   // Load configuration when app mounts
   onMounted(async () => {
-    if (boardAreaEl.value) {
-      boardObserver = new ResizeObserver(fitBoard)
-      boardObserver.observe(boardAreaEl.value)
-      requestAnimationFrame(fitBoard)
-    }
+    // The board must be measured before anything async delays this hook.
+    attachBoardObserver()
+    // Fonts and the board artwork can still shift the layout after mount, and
+    // the ResizeObserver cannot be relied on to report it (its notifications
+    // are skipped while the document is hidden). Re-fit once things settle.
+    requestBoardFit()
+    window.addEventListener('load', () => requestBoardFit(), { once: true })
+    setTimeout(requestBoardFit, 350)
+
     try {
       await configManager.loadConfig()
 
@@ -177,7 +211,7 @@
     <div class="app-body">
       <div class="app-main" :class="{ 'is-maximised': boardMaximised }">
         <div
-          ref="boardAreaEl"
+          :ref="setBoardAreaEl"
           class="chessboard-area"
           :class="{ 'with-chart': showPositionChart }"
         >
@@ -233,13 +267,22 @@
   }
 
   .chessboard-area {
-    flex: 1 1 auto;
+    /* `flex-basis: 0`, not `auto`.
+     *
+     * With `auto` the area's size is derived from its content — and its content
+     * is the board, whose height we compute *from* the area. That is a feedback
+     * loop: measuring the board changes the box it was measured in. Basis 0
+     * makes the area "whatever is left over", which depends only on the other
+     * rows, so the measurement is stable. */
+    flex: 1 1 0;
     min-height: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: var(--sp-2) 5px;
+    /* Only a hairline of side padding: on a phone the board is limited by the
+       screen width, so every pixel given to padding is a pixel off the board. */
+    padding: var(--sp-2) 4px;
     overflow: hidden;
 
     /* --board-w is written by fitBoard(); the board's own component CSS sizes
@@ -267,7 +310,7 @@
      padding tight — the board is width-limited on a phone, so any extra
      horizontal padding here would make it *smaller*, not bigger. */
   .app-main.is-maximised .chessboard-area {
-    padding: var(--sp-2) 5px;
+    padding: var(--sp-2) 4px;
   }
 
   @media (min-width: 769px) {

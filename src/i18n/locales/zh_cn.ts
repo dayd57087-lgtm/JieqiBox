@@ -95,6 +95,14 @@ export default {
     standard: '标准',
     compact: '精简',
     empty: '暂无内容',
+    turnRed: '轮到红方',
+    turnBlack: '轮到黑方',
+    noEngine: '未加载引擎',
+    analysing: '分析中…',
+    depth: '深度',
+    collapse: '折叠面板',
+    expand: '展开面板',
+    resizeHint: '拖动调整高度，点击折叠',
   },
   // 底部操作条
   navbar: {

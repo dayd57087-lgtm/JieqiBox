@@ -86,6 +86,7 @@
    * fold flag.
    */
   import { computed, inject, ref, onMounted, nextTick, watch } from 'vue'
+  import { requestBoardFit } from '@/composables/useBoardFit'
   import { useInterfaceSettings } from '@/composables/useInterfaceSettings'
   import { resolvePieceImage } from '@/utils/pieceImages'
   import { INITIAL_PIECE_COUNTS } from '@/utils/constants'
@@ -239,9 +240,19 @@
   onMounted(async () => {
     await nextTick()
     syncHeight()
+    requestBoardFit()
   })
 
-  watch([isFolded, rows], () => syncHeight(), { deep: true })
+  watch(
+    [isFolded, rows],
+    () => {
+      syncHeight()
+      // Folding this strip hands vertical space back to the board. `post` so
+      // the new height is already in the DOM when the board measures it.
+      requestBoardFit()
+    },
+    { deep: true, flush: 'post' }
+  )
 </script>
 
 <style scoped lang="scss">

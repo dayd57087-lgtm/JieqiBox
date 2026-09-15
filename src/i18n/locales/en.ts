@@ -98,6 +98,14 @@ export default {
     standard: 'Standard',
     compact: 'Compact',
     empty: 'Nothing to show',
+    turnRed: 'Red to move',
+    turnBlack: 'Black to move',
+    noEngine: 'No engine',
+    analysing: 'Analysing…',
+    depth: 'Depth',
+    collapse: 'Collapse panel',
+    expand: 'Expand panel',
+    resizeHint: 'Drag to resize, tap to fold',
   },
   // Bottom navigation bar
   navbar: {

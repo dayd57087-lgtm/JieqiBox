@@ -4,6 +4,33 @@
          最大化时收起，但操作条保留 —— 最大化按钮就在操作条上，
          把它一起藏掉就再也回不来了。 -->
     <BottomDeck v-show="!isMaximised">
+      <!-- 折叠时的一行摘要：轮到谁、引擎算到哪、最佳着法 -->
+      <template #summary>
+        <span
+          class="sum__side"
+          :class="sideToMove === 'red' ? 'is-red' : 'is-black'"
+        >
+          {{ sideToMove === 'red' ? $t('deck.turnRed') : $t('deck.turnBlack') }}
+        </span>
+
+        <template v-if="!isEngineLoaded">
+          <span class="sum__dim">{{ $t('deck.noEngine') }}</span>
+        </template>
+        <template v-else-if="!deckSummary">
+          <span class="sum__dim">{{ $t('deck.analysing') }}</span>
+        </template>
+        <template v-else>
+          <span class="sum__dim">{{ $t('deck.depth') }}</span>
+          <span class="sum__val">{{ deckSummary.depthText }}</span>
+          <span class="sum__sep">·</span>
+          <span class="sum__val" :class="deckSummary.scoreClass">
+            {{ deckSummary.scoreText }}
+          </span>
+          <span class="sum__sep">·</span>
+          <span class="sum__val">{{ deckSummary.bestMove }}</span>
+        </template>
+      </template>
+
       <template #analysis>
         <div class="mode-bar" v-if="isMatchMode || isHumanVsAiMode">
           <template v-if="isMatchMode">
@@ -2869,6 +2896,13 @@
       }
     })
   })
+
+  /**
+   * The folded deck shows one line. `multiPvInfos` already derives exactly the
+   * fields that line needs, so reuse its first entry rather than parsing the
+   * engine output a second time.
+   */
+  const deckSummary = computed(() => multiPvInfos.value[0] ?? null)
 
   const activePvInfo = computed(() => {
     const active = activeMultipvInfo.value

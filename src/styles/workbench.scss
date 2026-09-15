@@ -87,6 +87,62 @@
   background: rgb(var(--c-surface-2));
 }
 
+/* ── Folded deck: one line ────────────────────────────────────────── */
+.sum__side {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: #fff;
+}
+
+.sum__side.is-red {
+  background: rgb(var(--c-red));
+}
+
+.sum__side.is-black {
+  background: rgb(var(--c-black));
+}
+
+.sum__dim {
+  flex: 0 0 auto;
+  font-size: var(--fs-sm);
+  color: rgb(var(--c-text-3));
+}
+
+.sum__val {
+  flex: 0 0 auto;
+  font-size: var(--fs-base);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+  color: rgb(var(--c-text));
+}
+
+.sum__sep {
+  flex: 0 0 auto;
+  color: rgb(var(--c-text-3));
+}
+
+/* Score colours follow the same convention as the analysis list: a positive
+   score means red is ahead, so it is drawn in red. Matches the global
+   .score-* rules in AnalysisSidebar rather than inventing a second palette. */
+.sum__val.score-positive {
+  color: #c62828;
+}
+
+.sum__val.score-negative {
+  color: #2e7d32;
+}
+
+.sum__val.score-mate-positive {
+  color: #b71c1c;
+}
+
+.sum__val.score-mate-negative {
+  color: #1b5e20;
+}
+
 /* ── Drawer: engine picker ────────────────────────────────────────── */
 .engine-picker {
   display: flex;

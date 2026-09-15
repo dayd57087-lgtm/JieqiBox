@@ -378,6 +378,7 @@
     <DraggablePanel
       v-if="!isHumanVsAiMode || showEngineAnalysis"
       panel-id="engine-analysis"
+      expanded-on-mobile
     >
       <template #header>
         <h3>

@@ -97,6 +97,16 @@
       type: String,
       required: true,
     },
+    /**
+     * Keep this panel expanded on phones even though other panels start
+     * folded. For panels whose output is the whole point of the screen —
+     * the engine analysis, for instance — folding them by default would hide
+     * the result of the button the user just pressed.
+     */
+    expandedOnMobile: {
+      type: Boolean,
+      default: false,
+    },
   })
 
   const { getPanelState, updatePanelState, dockPanel, undockPanel } =
@@ -130,7 +140,8 @@
     const stored = localStorage.getItem(COLLAPSE_KEY)
     isCollapsed.value =
       stored === null
-        ? window.matchMedia('(max-width: 768px)').matches
+        ? !props.expandedOnMobile &&
+          window.matchMedia('(max-width: 768px)').matches
         : stored === '1'
   } catch {
     // Storage unavailable (private mode) — fall back to expanded.

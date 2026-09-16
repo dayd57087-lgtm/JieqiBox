@@ -500,20 +500,6 @@
               class="setting-row__switch"
             />
           </label>
-          <!-- Same state, different variant: turning one on turns the other
-               off, because `flipMode` is a single value with three states. -->
-          <label class="setting-row">
-            <span class="setting-row__label">{{
-              $t('analysis.freeFlipLineConnect')
-            }}</span>
-            <v-switch
-              v-model="freeFlipLineConnectOn"
-              color="primary"
-              hide-details
-              density="compact"
-              class="setting-row__switch"
-            />
-          </label>
           <label class="setting-row">
             <span class="setting-row__label">{{
               $t('analysis.ponderMode')
@@ -1005,23 +991,15 @@
 
   /* ---------- Flip mode switches ---------- */
   /**
-   * Two switches over one three-state value.
+   * 自由翻子模式: ask, rather than draw at random.
    *
-   * `flipMode` is 'random' | 'free' | 'free-inverted', so turning one variant on
-   * necessarily turns the other off — the mutual exclusion is structural rather
-   * than something the two controls have to be careful about.
+   * There is only one version of the asking rule — who gets asked is derived
+   * from 我方/对方, which follows the board. See useFlipPolicy.
    */
   const freeFlipOn = computed({
     get: () => flipMode.value === 'free',
     set: (on: boolean) => {
       flipMode.value = on ? 'free' : 'random'
-    },
-  })
-
-  const freeFlipLineConnectOn = computed({
-    get: () => flipMode.value === 'free-inverted',
-    set: (on: boolean) => {
-      flipMode.value = on ? 'free-inverted' : 'random'
     },
   })
 

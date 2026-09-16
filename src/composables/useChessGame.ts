@@ -79,8 +79,6 @@ export function useChessGame() {
 
   // Get persistent game settings
   const { flipMode, isFreeFlip } = useGameSettings()
-  // Who answers for a face-down piece; see useFlipPolicy.
-  const { shouldAsk } = useFlipPolicy()
 
   // Get human vs AI settings
   const { isHumanVsAiMode, aiSide } = useHumanVsAiSettings()
@@ -108,6 +106,9 @@ export function useChessGame() {
   const unrevealedPieceCounts = ref<{ [key: string]: number }>({})
   const capturedUnrevealedPieceCounts = ref<{ [key: string]: number }>({})
   const isBoardFlipped = ref(false) // board flip state
+
+  // 我方/对方 follows this flag, so the policy needs it; see useFlipPolicy.
+  const { shouldAsk } = useFlipPolicy(isBoardFlipped)
   const isHistoryNavigating = ref(false) // flag to indicate if we are navigating history
 
   // Get current unrevealed counts for display purposes (God view)
@@ -1684,11 +1685,11 @@ export function useChessGame() {
       return
     }
 
+    // The question is about the captured piece, which belongs to the side that
+    // did not move — so the policy is evaluated on that side, not the mover's.
     const capturedSide = getPieceSide(capturedHiddenPiece)
-    const capturerSide: 'red' | 'black' =
-      capturedSide === 'red' ? 'black' : 'red'
 
-    if (shouldAsk(capturerSide, 'capture')) {
+    if (shouldAsk(capturedSide, 'capture')) {
       pendingCaptureContext.value = { uciMove, flippedChar }
       pendingFlip.value = {
         pieceToMove: capturedHiddenPiece,
@@ -1701,13 +1702,25 @@ export function useChessGame() {
       return
     }
 
-    const drawn = drawCharForSide(capturedSide)
-    if (drawn) {
-      unrevealedPieceCounts.value[drawn]--
-      capturedUnrevealedPieceCounts.value[drawn] =
-        (capturedUnrevealedPieceCounts.value[drawn] || 0) + 1
+    // 分两种「不问」：
+    //  随机模式 —— 由程序决定一切，照旧从池里抽一个并记账；
+    //  自由翻子 + 被吃的是我方的子 —— 对方吃了我方的暗子。揭棋的玩法就是这样，
+    //  不知道吃的是什么，所以什么都不做：不动暗子池、不记入吃子、棋谱里也不带它。
+    if (!isFreeFlip.value) {
+      const drawn = drawCharForSide(capturedSide)
+      if (drawn) {
+        unrevealedPieceCounts.value[drawn]--
+        capturedUnrevealedPieceCounts.value[drawn] =
+          (capturedUnrevealedPieceCounts.value[drawn] || 0) + 1
+      }
+      finalizeMove(uciMove, flippedChar, drawn)
+      return
     }
-    finalizeMove(uciMove, flippedChar, drawn)
+
+    console.log(
+      `[DEBUG] settleCapture: ${capturedSide} 的暗子被吃且不询问，身份保持未知。`
+    )
+    finalizeMove(uciMove, flippedChar, null)
   }
 
   /**

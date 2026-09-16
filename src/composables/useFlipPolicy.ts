@@ -1,83 +1,65 @@
-import { computed } from 'vue'
+import { computed, type Ref } from 'vue'
 import { useGameSettings } from './useGameSettings'
 import { useAutoPlay } from './useAutoPlay'
 
 export type Side = 'red' | 'black'
 
-/** What a face-down piece is being identified for. */
+/** 这个暗子是在什么情形下需要确认的。 */
 export type FlipPromptKind = 'move' | 'capture'
 
 /**
- * Who answers for a face-down piece.
+ * 我方 / 对方 是一条**相对**的界线，跟着棋盘朝向走，与红黑无关：
+ * 棋盘未翻转时红方是我方，翻转后黑方是我方。这一切在后台完成，界面不显示。
  *
- * In random mode nobody is asked. In free mode a person decides, and when one
- * side is played by the computer that person is the human — but only for the
- * pieces the human is entitled to name.
+ * This is the whole 翻子 rule, and there is only one version of it:
  *
- * The two free variants differ in exactly one place: **the capture question**.
+ * | 事件                     | 需要选择？ |
+ * |--------------------------|-----------|
+ * | 我方的暗子移动            | 需要       |
+ * | 对方的暗子移动            | 需要       |
+ * | 我方吃掉对方的暗子        | 需要       |
+ * | 对方吃掉我方的暗子        | 不需要     |
  *
- * | event                                     | free  | 连线版 |
- * |-------------------------------------------|-------|--------|
- * | the human's face-down piece moves         | asks  | asks   |
- * | the computer's face-down piece moves      | drawn | drawn  |
- * | the human captures a face-down piece      | asks  | drawn  |
- * | the computer captures a face-down piece   | drawn | asks   |
+ * The last row is not "pick one at random" — a piece captured while face down
+ * is simply never identified. That is the game: you cannot know what you took,
+ * so the app does not invent an answer, and nothing is recorded about it.
  *
- * A piece that *moves* is always settled the same way: the human says what
- * their own piece was (they played it), and the computer's is drawn because it
- * cannot be asked. That part is not affected by the variant.
- *
- * A piece that is *captured* belongs to the side that did not move, and that is
- * where the variants part company. Normally the human names the pieces they
- * take; in the mirrored setup the computer's pieces are the ones whose identity
- * comes from the other platform, so the human names those instead, and what they
- * take themselves is simply drawn.
- *
- * ### Which side is the computer?
- *
- * The red/black computer switches, not the human-vs-AI dialog. The dialog is
- * just one way of setting them, and the switches are what actually make the
- * engine move; keying off the dialog alone left this policy inert for anyone who
- * turned on 红电脑 or 黑电脑 from the toolbar.
+ * 例外：双方都是电脑时没有我方/对方可言，一切按我方的逻辑处理（全部询问），
+ * 由旁观的人来回答。
  */
-export function useFlipPolicy() {
-  const { flipMode, isFreeFlip } = useGameSettings()
+export function useFlipPolicy(isBoardFlipped: Ref<boolean>) {
+  const { isFreeFlip } = useGameSettings()
   const { isRedAi, isBlackAi } = useAutoPlay()
 
-  /** Sides the engine plays. Empty, or both, means no single human side. */
-  const computerSides = computed<Side[]>(() => {
-    const sides: Side[] = []
-    if (isRedAi.value) sides.push('red')
-    if (isBlackAi.value) sides.push('black')
-    return sides
-  })
+  /** 我方 = 棋盘下方那一方。 */
+  const mySide = computed<Side>(() => (isBoardFlipped.value ? 'black' : 'red'))
+  const oppositeSide = computed<Side>(() =>
+    isBoardFlipped.value ? 'red' : 'black'
+  )
+
+  /** 双方都是电脑：没有我方/对方之分。 */
+  const isComputerVsComputer = computed(() => isRedAi.value && isBlackAi.value)
 
   /**
-   * Should the operator name the face-down piece involved in this event?
+   * 这个暗子需不需要人来指定？
    *
-   * @param actingSide for `move`, the side whose piece moved; for `capture`,
-   *   the side that did the capturing (i.e. the piece being asked about belongs
-   *   to the other side).
-   *
-   * With no single computer side — two humans at one board, a computer-vs-
-   * computer game being supervised, or a position being analysed — the operator
-   * answers for everything, in both variants.
+   * @param pieceSide 待确认的那枚暗子属于哪一方。
+   *   - `move`：就是走子的那一方
+   *   - `capture`：是**被吃**的那一方，与走子方相反
    */
-  const shouldAsk = (actingSide: Side, kind: FlipPromptKind): boolean => {
+  const shouldAsk = (pieceSide: Side, kind: FlipPromptKind): boolean => {
     if (!isFreeFlip.value) return false
 
-    const sides = computerSides.value
-    if (sides.length !== 1) return true
+    // 双方都是电脑时不分我方对方，一律询问。
+    if (isComputerVsComputer.value) return true
 
-    const isHumanActing = actingSide !== sides[0]
+    // 移动的暗子哪一方都要问 —— 两枚子都摆在眼前，只是不知道名字。
+    if (kind === 'move') return true
 
-    // Only the capture question flips between the two variants.
-    return kind === 'capture'
-      ? flipMode.value === 'free-inverted'
-        ? !isHumanActing
-        : isHumanActing
-      : isHumanActing
+    // 被吃的暗子：只有它属于对方时才问。
+    // 属于我方，说明是对方吃了我方的子 —— 保持未知，不做任何操作。
+    return pieceSide === oppositeSide.value
   }
 
-  return { shouldAsk, computerSides }
+  return { shouldAsk, mySide, oppositeSide, isComputerVsComputer }
 }

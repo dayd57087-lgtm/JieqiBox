@@ -7,20 +7,13 @@ const configManager = useConfigManager()
 /**
  * How a face-down piece's identity is decided.
  *
- * - `random`        — drawn from the side's pool, nobody is asked.
- * - `free`          — the player answering for that side chooses (see
- *                     useFlipPolicy for *who* that is).
- * - `free-inverted` — same as `free`, with the asking swapped between the human
- *                     and the computer. Used when mirroring a game played
- *                     elsewhere, where the information comes from the other
- *                     platform rather than from this app.
- *
- * Modelled as one value rather than two booleans so "the two free modes are
- * mutually exclusive" is structural: there is no state in which both are on.
+ * - `random` — drawn from the side's pool, nobody is asked.
+ * - `free`   — asked, following the 我方/对方 rule in useFlipPolicy. There is
+ *              only one version of that rule; it is not configurable.
  */
-export type FlipMode = 'random' | 'free' | 'free-inverted'
+export type FlipMode = 'random' | 'free'
 
-const FLIP_MODES: FlipMode[] = ['random', 'free', 'free-inverted']
+const FLIP_MODES: FlipMode[] = ['random', 'free']
 
 const normaliseFlipMode = (raw: unknown): FlipMode =>
   FLIP_MODES.includes(raw as FlipMode) ? (raw as FlipMode) : 'random'
@@ -57,9 +50,6 @@ const enablePonder = ref<boolean>(initialEnablePonder)
 
 /** True whenever the player answers for face-down pieces, in either variant. */
 const isFreeFlip = computed(() => flipMode.value !== 'random')
-
-/** True only for the variant that swaps who gets asked. */
-const isFreeFlipInverted = computed(() => flipMode.value === 'free-inverted')
 
 // Flag to track if config is loaded
 const isConfigLoaded = ref(false)
@@ -108,7 +98,6 @@ export function useGameSettings() {
   return {
     flipMode,
     isFreeFlip,
-    isFreeFlipInverted,
     enablePonder,
     loadSettings,
   }

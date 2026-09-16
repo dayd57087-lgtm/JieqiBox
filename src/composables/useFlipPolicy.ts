@@ -4,35 +4,41 @@ import { useAutoPlay } from './useAutoPlay'
 
 export type Side = 'red' | 'black'
 
+/** What a face-down piece is being identified for. */
+export type FlipPromptKind = 'move' | 'capture'
+
 /**
  * Who answers for a face-down piece.
  *
  * In random mode nobody is asked. In free mode a person decides, and when one
- * side is played by the computer that person is the human — but only for *their*
- * side of the board. The computer's own pieces are drawn from the computer's
- * pool, because it has no way to tell us what they were.
+ * side is played by the computer that person is the human — but only for the
+ * pieces the human is entitled to name.
  *
- * The two free variants are mirror images:
+ * The two free variants differ in exactly one place: **the capture question**.
  *
- * | event                                    | free  | 连线版 |
- * |------------------------------------------|-------|--------|
- * | the human's face-down piece moves        | asks  | drawn  |
- * | the computer's face-down piece moves     | drawn | asks   |
- * | the human captures a face-down piece     | asks  | drawn  |
- * | the computer captures a face-down piece  | drawn | asks   |
+ * | event                                     | free  | 连线版 |
+ * |-------------------------------------------|-------|--------|
+ * | the human's face-down piece moves         | asks  | asks   |
+ * | the computer's face-down piece moves      | drawn | drawn  |
+ * | the human captures a face-down piece      | asks  | drawn  |
+ * | the computer captures a face-down piece   | drawn | asks   |
  *
- * The capture rows are the ones that matter in practice. A captured piece
- * belongs to the side that did *not* move, so "the computer captured a face-down
- * piece" means a piece of the human's was taken — and in the inverted variant
- * that is exactly the case the operator has to answer for, because it is the one
- * they can read off the platform they are mirroring.
+ * A piece that *moves* is always settled the same way: the human says what
+ * their own piece was (they played it), and the computer's is drawn because it
+ * cannot be asked. That part is not affected by the variant.
+ *
+ * A piece that is *captured* belongs to the side that did not move, and that is
+ * where the variants part company. Normally the human names the pieces they
+ * take; in the mirrored setup the computer's pieces are the ones whose identity
+ * comes from the other platform, so the human names those instead, and what they
+ * take themselves is simply drawn.
  *
  * ### Which side is the computer?
  *
  * The red/black computer switches, not the human-vs-AI dialog. The dialog is
  * just one way of setting them, and the switches are what actually make the
- * engine move; keying off the dialog alone left this whole policy inert for
- * anyone who simply turned on 红电脑 or 黑电脑 from the toolbar.
+ * engine move; keying off the dialog alone left this policy inert for anyone who
+ * turned on 红电脑 or 黑电脑 from the toolbar.
  */
 export function useFlipPolicy() {
   const { flipMode, isFreeFlip } = useGameSettings()
@@ -47,26 +53,30 @@ export function useFlipPolicy() {
   })
 
   /**
-   * Should the operator be asked about a face-down piece?
+   * Should the operator name the face-down piece involved in this event?
    *
-   * `actingSide` is the side that made the move — for a capture question too,
-   * since the piece being asked about belongs to the other side.
+   * @param actingSide for `move`, the side whose piece moved; for `capture`,
+   *   the side that did the capturing (i.e. the piece being asked about belongs
+   *   to the other side).
    *
-   * When exactly one side is played by the computer the mode decides; the rest
-   * of the time the operator answers for everything, which covers two humans at
-   * one board, a computer-vs-computer game being supervised, and a position
-   * being analysed.
+   * With no single computer side — two humans at one board, a computer-vs-
+   * computer game being supervised, or a position being analysed — the operator
+   * answers for everything, in both variants.
    */
-  const shouldAsk = (actingSide: Side): boolean => {
+  const shouldAsk = (actingSide: Side, kind: FlipPromptKind): boolean => {
     if (!isFreeFlip.value) return false
 
     const sides = computerSides.value
     if (sides.length !== 1) return true
 
-    const computerSide = sides[0]
-    return flipMode.value === 'free-inverted'
-      ? actingSide === computerSide
-      : actingSide !== computerSide
+    const isHumanActing = actingSide !== sides[0]
+
+    // Only the capture question flips between the two variants.
+    return kind === 'capture'
+      ? flipMode.value === 'free-inverted'
+        ? !isHumanActing
+        : isHumanActing
+      : isHumanActing
   }
 
   return { shouldAsk, computerSides }

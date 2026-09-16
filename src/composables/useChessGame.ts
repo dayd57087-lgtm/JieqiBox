@@ -1688,7 +1688,7 @@ export function useChessGame() {
     const capturerSide: 'red' | 'black' =
       capturedSide === 'red' ? 'black' : 'red'
 
-    if (shouldAsk(capturerSide)) {
+    if (shouldAsk(capturerSide, 'capture')) {
       pendingCaptureContext.value = { uciMove, flippedChar }
       pendingFlip.value = {
         pieceToMove: capturedHiddenPiece,
@@ -2309,7 +2309,7 @@ export function useChessGame() {
     // A face-down piece whose identity this move has to settle, if any.
     const moverIsFaceDown = wasDarkPiece && !skipFlipLogic && !isMatchMode
 
-    if (moverIsFaceDown && shouldAsk(pieceSide)) {
+    if (moverIsFaceDown && shouldAsk(pieceSide, 'move')) {
       console.log(`[DEBUG] movePiece: Dark piece move detected, answer owed.`)
       // Only one piece type left? Then there is nothing to ask about.
       const uniquePieceTypes = [

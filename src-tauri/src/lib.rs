@@ -47,6 +47,51 @@ fn check_android_engine_file(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// 应用的真实包名。
+///
+/// 不能用 tauri.conf.json 里的 identifier：正式版是 com.jieqibox.app，
+/// 测试版的包名却是 com.jieqibox.app.dev，两者由同一个 identifier 构建出来。
+/// 照抄 identifier 会拼到**另一个应用**的私有目录上，两个 uid 不同，
+/// 于是 create_dir_all 直接 EACCES（Permission denied, os error 13）。
+///
+/// Android 会把主进程的 cmdline 设成包名，这是不依赖任何 tauri API 的可靠来源；
+/// 拿不到时再退回 identifier。
+fn app_package_name(app: &AppHandle) -> String {
+    if cfg!(target_os = "android") {
+        if let Ok(raw) = fs::read("/proc/self/cmdline") {
+            let text = String::from_utf8_lossy(&raw);
+            let name = text.split('\0').next().unwrap_or("").trim();
+            if !name.is_empty() {
+                return name.to_string();
+            }
+        }
+    }
+    app.config().identifier.clone()
+}
+
+/// 应用私有的 files 目录。
+///
+/// /data/data 在 Android 上只是 /data/user/0 的符号链接；两个都试一下，
+/// 用先存在的那个，都不存在就按真实包名给出规范路径（调用方再 create_dir_all）。
+#[cfg(target_os = "android")]
+fn app_internal_files_dir(app: &AppHandle) -> String {
+    let pkg = app_package_name(app);
+    for candidate in [
+        format!("/data/user/0/{}/files", pkg),
+        format!("/data/data/{}/files", pkg),
+    ] {
+        if Path::new(&candidate).is_dir() {
+            return candidate;
+        }
+    }
+    format!("/data/user/0/{}/files", pkg)
+}
+
+#[cfg(not(target_os = "android"))]
+fn app_internal_files_dir(_app: &AppHandle) -> String {
+    ".".to_string()
+}
+
 /// Copy a file from a user-accessible directory to the app's internal storage.
 /// Used for the legacy engine scanning mechanism.
 #[cfg(target_os = "android")]
@@ -58,9 +103,7 @@ fn copy_file_to_internal_storage(source_path_str: &str, app_handle: &AppHandle) 
         return Err(error_msg);
     }
 
-    // Use dynamic bundle identifier for a robust internal storage path
-    let bundle_identifier = &app_handle.config().identifier;
-    let internal_dir = format!("/data/data/{}/files/engines", bundle_identifier);
+    let internal_dir = format!("{}/engines", app_internal_files_dir(app_handle));
     if let Err(e) = fs::create_dir_all(&internal_dir) {
         let error_msg = format!("Failed to create internal directory: {}", e);
         let _ = app_handle.emit("engine-output", format!("[DEBUG] {}", error_msg));
@@ -117,9 +160,9 @@ async fn save_game_notation(content: String, filename: String, app: AppHandle) -
         return Err("This function is only available on Android".to_string());
     }
 
-    // Use dynamic bundle identifier for external storage path
-    let bundle_identifier = &app.config().identifier;
-    let external_dir = format!("/storage/emulated/0/Android/data/{}/files/notations", bundle_identifier);
+    // 外部目录同样要用真实包名：测试版写正式版的 Android/data 目录会被拒绝
+    let package_name = app_package_name(&app);
+    let external_dir = format!("/storage/emulated/0/Android/data/{}/files/notations", package_name);
     
     // Create the "notations" directory if it doesn't exist
     if let Err(e) = fs::create_dir_all(&external_dir) {
@@ -147,9 +190,9 @@ async fn save_chart_image(content: String, filename: String, app: AppHandle) -> 
         return Err("This function is only available on Android".to_string());
     }
 
-    // Use dynamic bundle identifier for external storage path
-    let bundle_identifier = &app.config().identifier;
-    let external_dir = format!("/storage/emulated/0/Android/data/{}/files/charts", bundle_identifier);
+    // 外部目录同样要用真实包名（理由同 notations）
+    let package_name = app_package_name(&app);
+    let external_dir = format!("/storage/emulated/0/Android/data/{}/files/charts", package_name);
     
     // Create the "charts" directory if it doesn't exist
     if let Err(e) = fs::create_dir_all(&external_dir) {
@@ -181,8 +224,7 @@ async fn save_chart_image(content: String, filename: String, app: AppHandle) -> 
 fn get_config_file_path(app: &AppHandle) -> Result<String, String> {
     if cfg!(target_os = "android") {
         // On Android, use the app's private internal data directory
-        let bundle_identifier = &app.config().identifier;
-        Ok(format!("/data/data/{}/files/config.ini", bundle_identifier))
+        Ok(format!("{}/config.ini", app_internal_files_dir(app)))
     } else {
         // On desktop, for simplicity, use the same directory as the executable
         Ok("config.ini".to_string())
@@ -193,8 +235,7 @@ fn get_config_file_path(app: &AppHandle) -> Result<String, String> {
 fn get_autosave_file_path(app: &AppHandle) -> Result<String, String> {
     if cfg!(target_os = "android") {
         // On Android, use the app's private internal data directory
-        let bundle_identifier = &app.config().identifier;
-        Ok(format!("/data/data/{}/files/Autosave.json", bundle_identifier))
+        Ok(format!("{}/Autosave.json", app_internal_files_dir(app)))
     } else {
         // On desktop, use the same directory as the config file
         Ok("Autosave.json".to_string())
@@ -205,8 +246,7 @@ fn get_autosave_file_path(app: &AppHandle) -> Result<String, String> {
 fn get_opening_book_db_path(app: &AppHandle) -> Result<String, String> {
     if cfg!(target_os = "android") {
         // On Android, use the app's private internal data directory
-        let bundle_identifier = &app.config().identifier;
-        Ok(format!("/data/data/{}/files/jieqi_openings.jb", bundle_identifier))
+        Ok(format!("{}/jieqi_openings.jb", app_internal_files_dir(app)))
     } else {
         // On desktop, use the same directory as the config file
         Ok("jieqi_openings.jb".to_string())
@@ -311,12 +351,12 @@ fn get_user_engine_directory() -> String {
 /// and then returns a list of all engines available in internal storage.
 #[cfg(target_os = "android")]
 fn sync_and_list_engines(app_handle: &AppHandle) -> Result<Vec<String>, String> {
-    let bundle_identifier = &app_handle.config().identifier;
+    let package_name = app_package_name(app_handle);
     let source_dirs = vec![
         get_user_engine_directory(),
-        format!("/storage/emulated/0/Android/data/{}/files/engines", bundle_identifier),
+        format!("/storage/emulated/0/Android/data/{}/files/engines", package_name),
     ];
-    let internal_dir_str = format!("/data/data/{}/files/engines", bundle_identifier);
+    let internal_dir_str = format!("{}/engines", app_internal_files_dir(app_handle));
     
     let _ = app_handle.emit("engine-output", format!("[DEBUG] Syncing engines. Internal dir: {}. Source dirs: {:?}", internal_dir_str, source_dirs));
     
@@ -537,8 +577,11 @@ async fn handle_saf_file_result(
     let engine_instance_id = format!("{}_{}", name, chrono::Utc::now().timestamp_millis());
 
     // Define the final destination directory for the engine using the unique ID.
-    let bundle_identifier = &app.config().identifier;
-    let engine_base_dir = format!("/data/data/{}/files/engines/{}", bundle_identifier, &engine_instance_id);
+    let engine_base_dir = format!(
+        "{}/engines/{}",
+        app_internal_files_dir(&app),
+        &engine_instance_id
+    );
 
     // Create the engine-specific directory
     if let Err(e) = fs::create_dir_all(&engine_base_dir) {
@@ -621,8 +664,11 @@ async fn handle_nnue_file_result(
     }
 
     // Get the engine directory path
-    let bundle_identifier = &app.config().identifier;
-    let engine_base_dir = format!("/data/data/{}/files/engines/{}", bundle_identifier, &engine_instance_id);
+    let engine_base_dir = format!(
+        "{}/engines/{}",
+        app_internal_files_dir(&app),
+        &engine_instance_id
+    );
 
     // Define the final path for the NNUE file in the same directory as the engine
     let final_nnue_path_str = format!("{}/{}", engine_base_dir, &filename);

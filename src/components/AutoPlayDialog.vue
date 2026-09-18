@@ -623,6 +623,20 @@
 
       <v-divider />
 
+      <!--
+        启动前把缺什么直接摆出来。原先点了「开始连线」如果引擎没加载，
+        start() 只是往日志里写一行就返回了，界面毫无反应 ——
+        用户只会觉得按钮坏了。日志面板默认还是收起的。
+      -->
+      <div v-if="!isRunning && startBlockers.length" class="px-4 pt-3">
+        <v-alert type="warning" density="compact" variant="tonal">
+          <div class="lc-blockers__title">{{ t('lineConnect.cantStart') }}</div>
+          <ul class="lc-blockers__list">
+            <li v-for="b in startBlockers" :key="b">{{ b }}</li>
+          </ul>
+        </v-alert>
+      </div>
+
       <v-card-actions>
         <v-btn
           size="small"
@@ -815,6 +829,22 @@
   }
   const engineOk = computed(() => !!engine?.isEngineLoaded?.value)
 
+  /**
+   * 「开始连线」还缺哪些前置条件。
+   *
+   * 这些正是 useLineConnect 的 start() 会提前返回的情形；
+   * 在这里先算出来，用户不必点一下才知道为什么没反应。
+   */
+  const startBlockers = computed(() => {
+    const out: string[] = []
+    // isSupported 是普通函数，不是 ref
+    if (!isSupported()) out.push(t('lineConnect.blockAndroidOnly'))
+    if (!engineOk.value) out.push(t('lineConnect.blockNoEngine'))
+    if (!captureRunning.value) out.push(t('lineConnect.blockNoCapture'))
+    if (autoPlay.value && !a11yOk.value) out.push(t('lineConnect.blockNoA11y'))
+    return out
+  })
+
   const logContainer = ref<HTMLElement | null>(null)
 
   const sideOptions = computed(() => [
@@ -970,6 +1000,18 @@
     grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
     gap: 10px;
     margin-bottom: 8px;
+  }
+
+  .lc-blockers__title {
+    font-weight: 600;
+    font-size: 13px;
+    margin-bottom: 2px;
+  }
+
+  .lc-blockers__list {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 12px;
   }
 
   .lc-check__path {

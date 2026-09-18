@@ -123,6 +123,16 @@
         <i class="mdi mdi-flip-vertical act__icon"></i>
         <span class="act__label">{{ $t('toolbar.core.flip') }}</span>
       </button>
+
+      <button
+        type="button"
+        class="act"
+        :title="$t('toolbar.lineConnect')"
+        @click="showAutoPlayDialog = true"
+      >
+        <i class="mdi mdi-access-point-network act__icon"></i>
+        <span class="act__label">{{ $t('toolbar.core.connect') }}</span>
+      </button>
     </nav>
 
     <!-- ── Dialogs ───────────────────────────────────────────────────── -->
@@ -146,6 +156,7 @@
     <ReviewAnalysisDialog v-model="showReviewDialog" />
     <OpeningBookDialog v-model="showOpeningBookDialog" />
     <LanguageDialog v-model="showLanguageDialog" />
+    <AutoPlayDialog v-model="showAutoPlayDialog" />
   </header>
 </template>
 
@@ -167,6 +178,7 @@
     asAction,
   } from '../composables/useMainDrawer'
   import LanguageDialog from './LanguageDialog.vue'
+  import AutoPlayDialog from './AutoPlayDialog.vue'
 
   const { t } = useI18n()
   const gameState: any = inject('game-state')
@@ -191,6 +203,9 @@
 
   /* ---------- Language ---------- */
   const showLanguageDialog = ref(false)
+
+  /* ---------- Line connect (连线自动走棋) ---------- */
+  const showAutoPlayDialog = ref(false)
 
   /* ---------- Engine status pill ---------- */
   const isEngineLoaded = computed(() => !!engineState.isEngineLoaded?.value)

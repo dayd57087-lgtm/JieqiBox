@@ -1,11 +1,15 @@
 name: Build Android APK
 
-# Builds the UI-redesigned JieqiBox for Android (arm64-v8a only, which covers
-# every reasonably modern phone and keeps the CI runtime sane).
+# 一次构建产出两个 APK：
 #
-# The APK is attached to the fixed release tag "ui-latest", so the download URL
-# never changes:
-#   https://github.com/<owner>/<repo>/releases/download/ui-latest/jieqibox-ui-arm64.apk
+#   正式版  com.jieqibox.app      普通对局用，界面里没有模型入口
+#   测试版  com.jieqibox.app.dev  多一个「识别模型」区块，可以导入自己的 ONNX 模型
+#
+# 两个包的下载地址固定不变：
+#   https://github.com/<owner>/<repo>/releases/download/official-latest/jieqibox-official-arm64.apk
+#   https://github.com/<owner>/<repo>/releases/download/dev-latest/jieqibox-dev-arm64.apk
+#
+# 只出 arm64-v8a：现代手机都是这个，同时能把 CI 时间压在合理范围内。
 
 on:
   workflow_dispatch:
@@ -24,9 +28,9 @@ permissions:
 
 jobs:
   build-android:
-    name: Build Android APK (arm64)
+    name: Build Android APKs (arm64)
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
 
@@ -45,9 +49,8 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
         with:
-          # The action's default package list still asks for `tools`, which no
-          # longer exists in recent cmdline-tools, so `sdkmanager tools` fails
-          # and takes the whole step down. Name what we actually need instead.
+          # 这个 action 的默认包里还带着早就被移除的 `tools`，会让
+          # `sdkmanager tools` 失败并拖垮整个步骤。直接写明需要的组件。
           packages: 'platform-tools platforms;android-34 build-tools;34.0.0 ndk;26.1.10909125'
           accept-android-sdk-licenses: true
 
@@ -74,17 +77,30 @@ jobs:
         with:
           workspaces: './src-tauri -> target'
 
+      - name: Resolve model (best.onnx)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p public/models
+          # 优先用仓库里自带的模型，其次是微调产出的 release，最后回退到上游权重。
+          if [ -s models/best.onnx ]; then
+            echo "Using models/best.onnx committed to the repository"
+            cp models/best.onnx public/models/best.onnx
+          elif curl -L --fail -o public/models/best.onnx \
+              "https://github.com/${{ github.repository }}/releases/download/line-connect-model/best.onnx"; then
+            echo "Using the fine-tuned model from the line-connect-model release"
+          elif curl -L --fail -o public/models/best.onnx \
+              https://github.com/Velithia/JieqiModels/releases/download/yolo-models/best.onnx; then
+            echo "Using the upstream JieqiModels weights"
+          fi
+          test -s public/models/best.onnx
+          ls -l public/models/best.onnx
+
       - name: Install JS dependencies
         run: npm ci
 
       - name: Type check and build frontend
         run: npm run build
-
-      - name: Build Tauri Android app (unsigned)
-        run: npx tauri android build --apk --target aarch64
-        env:
-          CI: true
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Decode signing keystore
         run: |
@@ -98,48 +114,115 @@ jobs:
             echo "Using bundled self-signed keystore"
           fi
 
-      - name: Align and sign APK
-        id: sign
+      # ---------------------------------------------------------------- 正式版
+      - name: Build 正式版 (unsigned)
+        run: npx tauri android build --apk --target aarch64
+        env:
+          CI: true
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # ORG_GRADLE_PROJECT_* 会被 Gradle 当成项目属性，
+          # 这样不必往 tauri 传参也能选中变体。
+          ORG_GRADLE_PROJECT_appVariant: official
+
+      - name: Sign 正式版
+        id: official
         run: |
           set -euo pipefail
           BT="$ANDROID_HOME/build-tools/34.0.0"
           UNSIGNED=$(find src-tauri/gen/android/app/build/outputs/apk -name "*.apk" | head -n 1)
           if [ -z "$UNSIGNED" ]; then
-            echo "::error::No APK produced"
+            echo "::error::正式版没有产出 APK"
             find src-tauri/gen/android/app/build/outputs -type f || true
             exit 1
           fi
-          echo "Unsigned APK: $UNSIGNED"
-          "$BT/zipalign" -f -p 4 "$UNSIGNED" "$RUNNER_TEMP/sign/aligned.apk"
+          echo "Unsigned: $UNSIGNED"
+          "$BT/zipalign" -f -p 4 "$UNSIGNED" "$RUNNER_TEMP/sign/aligned-official.apk"
           "$BT/apksigner" sign \
             --ks "$RUNNER_TEMP/sign/release.jks" \
             --ks-pass pass:android \
             --key-pass pass:android \
             --ks-key-alias hotrank \
-            --out "$RUNNER_TEMP/sign/jieqibox-ui-arm64.apk" \
-            "$RUNNER_TEMP/sign/aligned.apk"
-          "$BT/apksigner" verify --print-certs "$RUNNER_TEMP/sign/jieqibox-ui-arm64.apk"
-          ls -lh "$RUNNER_TEMP/sign/jieqibox-ui-arm64.apk"
-          echo "apk=$RUNNER_TEMP/sign/jieqibox-ui-arm64.apk" >> "$GITHUB_OUTPUT"
+            --out "$RUNNER_TEMP/sign/jieqibox-official-arm64.apk" \
+            "$RUNNER_TEMP/sign/aligned-official.apk"
+          "$BT/apksigner" verify --print-certs "$RUNNER_TEMP/sign/jieqibox-official-arm64.apk"
+          "$BT/aapt2" dump badging "$RUNNER_TEMP/sign/jieqibox-official-arm64.apk" | head -1
+          ls -lh "$RUNNER_TEMP/sign/jieqibox-official-arm64.apk"
+          echo "apk=$RUNNER_TEMP/sign/jieqibox-official-arm64.apk" >> "$GITHUB_OUTPUT"
 
-      - name: Upload APK artifact
+      - name: Clear APK outputs before the second build
+        run: |
+          # 两个变体共用同一个 Gradle 工程，产物目录也相同。
+          # 先清掉上一次的输出，避免第二个变体把第一个的文件当成自己的。
+          rm -rf src-tauri/gen/android/app/build/outputs/apk
+
+      # ---------------------------------------------------------------- 测试版
+      - name: Build 测试版 (unsigned)
+        run: npx tauri android build --apk --target aarch64
+        env:
+          CI: true
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ORG_GRADLE_PROJECT_appVariant: dev
+
+      - name: Sign 测试版
+        id: dev
+        run: |
+          set -euo pipefail
+          BT="$ANDROID_HOME/build-tools/34.0.0"
+          UNSIGNED=$(find src-tauri/gen/android/app/build/outputs/apk -name "*.apk" | head -n 1)
+          if [ -z "$UNSIGNED" ]; then
+            echo "::error::测试版没有产出 APK"
+            find src-tauri/gen/android/app/build/outputs -type f || true
+            exit 1
+          fi
+          echo "Unsigned: $UNSIGNED"
+          "$BT/zipalign" -f -p 4 "$UNSIGNED" "$RUNNER_TEMP/sign/aligned-dev.apk"
+          "$BT/apksigner" sign \
+            --ks "$RUNNER_TEMP/sign/release.jks" \
+            --ks-pass pass:android \
+            --key-pass pass:android \
+            --ks-key-alias hotrank \
+            --out "$RUNNER_TEMP/sign/jieqibox-dev-arm64.apk" \
+            "$RUNNER_TEMP/sign/aligned-dev.apk"
+          "$BT/apksigner" verify --print-certs "$RUNNER_TEMP/sign/jieqibox-dev-arm64.apk"
+          "$BT/aapt2" dump badging "$RUNNER_TEMP/sign/jieqibox-dev-arm64.apk" | head -1
+          ls -lh "$RUNNER_TEMP/sign/jieqibox-dev-arm64.apk"
+          echo "apk=$RUNNER_TEMP/sign/jieqibox-dev-arm64.apk" >> "$GITHUB_OUTPUT"
+
+      # ---------------------------------------------------------------- 发布
+      - name: Upload APKs as artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: jieqibox-ui-arm64
-          path: ${{ steps.sign.outputs.apk }}
+          name: jieqibox-arm64-apks
+          path: |
+            ${{ steps.official.outputs.apk }}
+            ${{ steps.dev.outputs.apk }}
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish APK to the fixed release tag
+      - name: Publish 正式版
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          TAG="ui-latest"
+          TAG="official-latest"
           gh release delete "$TAG" --yes --cleanup-tag || true
-          cp "${{ steps.sign.outputs.apk }}" jieqibox-ui-arm64.apk
-          gh release create "$TAG" jieqibox-ui-arm64.apk \
-            --title "JieqiBox 界面重做版" \
-            --notes "基于官方原版 0.7.2 的界面重做（arm64-v8a，包名 com.jieqibox.app）。与官方版本包名相同、签名相同，可直接覆盖安装。" \
+          cp "${{ steps.official.outputs.apk }}" jieqibox-official-arm64.apk
+          gh release create "$TAG" jieqibox-official-arm64.apk \
+            --title "JieqiBox 正式版" \
+            --notes "官方版 + 连线自动走棋。包名 com.jieqibox.app，与之前的界面重做版同包名同签名，可直接覆盖安装。" \
             --prerelease
-          echo "Download: https://github.com/${{ github.repository }}/releases/download/$TAG/jieqibox-ui-arm64.apk"
+          echo "https://github.com/${{ github.repository }}/releases/download/$TAG/jieqibox-official-arm64.apk"
+
+      - name: Publish 测试版
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="dev-latest"
+          gh release delete "$TAG" --yes --cleanup-tag || true
+          cp "${{ steps.dev.outputs.apk }}" jieqibox-dev-arm64.apk
+          gh release create "$TAG" jieqibox-dev-arm64.apk \
+            --title "JieqiBox 测试版" \
+            --notes "正式版的全部功能，另加「识别模型」区块，可以导入自己的 ONNX 模型。包名 com.jieqibox.app.dev，与正式版可同时安装。" \
+            --prerelease
+          echo "https://github.com/${{ github.repository }}/releases/download/$TAG/jieqibox-dev-arm64.apk"

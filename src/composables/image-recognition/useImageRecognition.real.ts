@@ -4,6 +4,90 @@ import * as ort from 'onnxruntime-web'
 // Import types from the new file
 import { LABELS, type DetectionBox, type ProcessedImage } from './types'
 
+/**
+ * The ONNX session is expensive to build (tens of megabytes of weights), so it
+ * is shared between every consumer of this composable instead of being created
+ * once per component.
+ */
+let sharedSession: ort.InferenceSession | null = null
+let sharedSessionPromise: Promise<ort.InferenceSession> | null = null
+
+/** 当前实际生效的模型来源，测试版界面会显示它。 */
+export const modelSource = ref<'builtin' | 'imported'>('builtin')
+export const importedModelName = ref('')
+
+interface ModelImportBridge {
+  isSupported(): boolean
+  hasModel(): boolean
+  modelName(): string
+  modelSize(): number
+  pickModel(): void
+  readModel(): string
+  clearModel(): boolean
+}
+
+/**
+ * 丢掉缓存的推理会话，下次识别时重建。
+ * 导入或清除模型之后必须调用，否则仍会沿用旧模型。
+ */
+export function resetSharedSession(): void {
+  try {
+    sharedSession?.release?.()
+  } catch {
+    /* 释放失败不影响后续重建 */
+  }
+  sharedSession = null
+  sharedSessionPromise = null
+}
+
+/** 测试版的模型导入桥；正式版里不存在，或者 isSupported() 为 false。 */
+export function modelImportBridge(): ModelImportBridge | null {
+  const bridge = (window as any).ModelImport as ModelImportBridge | undefined
+  if (!bridge || typeof bridge.isSupported !== 'function') return null
+  return bridge.isSupported() ? bridge : null
+}
+
+function base64ToBytes(b64: string): Uint8Array {
+  const binary = atob(b64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return bytes
+}
+
+/**
+ * 建推理会话：测试版导入过模型就优先用它，否则用打包进应用的。
+ *
+ * 导入的模型放在应用私有目录，WebView 自己读不到，所以由原生侧以 base64
+ * 传过来再还原成字节。模型通常 10 MB 上下，这一步多花几百毫秒，只在启动时做一次。
+ */
+async function createSession(base: string): Promise<ort.InferenceSession> {
+  const options = {
+    executionProviders: ['wasm'] as const,
+    graphOptimizationLevel: 'all' as const,
+  }
+
+  const bridge = modelImportBridge()
+  if (bridge && bridge.hasModel()) {
+    try {
+      const b64 = bridge.readModel()
+      if (b64) {
+        const name = bridge.modelName() || '导入的模型'
+        console.log(`[image-recognition] 使用导入的模型 ${name}，${b64.length} 字符 base64`)
+        const created = await ort.InferenceSession.create(base64ToBytes(b64), options)
+        modelSource.value = 'imported'
+        importedModelName.value = name
+        return created
+      }
+    } catch (e) {
+      console.warn('[image-recognition] 导入的模型加载失败，回退到内置模型', e)
+    }
+  }
+
+  modelSource.value = 'builtin'
+  importedModelName.value = ''
+  return ort.InferenceSession.create(base + 'models/best.onnx', options)
+}
+
 export const useImageRecognition = () => {
   const { t } = useI18n()
   const session = ref<ort.InferenceSession | null>(null)
@@ -15,9 +99,22 @@ export const useImageRecognition = () => {
   const outputCanvas = ref<HTMLCanvasElement | null>(null)
   const showBoundingBoxes = ref(true)
 
+  /**
+   * Effective model input size and whether the loaded model accepts dynamic
+   * shapes. A fixed-shape graph (the exported upstream model) forces 640; a
+   * model exported with dynamic axes can run much smaller, which is the single
+   * biggest speed lever for the line-connect loop.
+   */
+  const modelInput = ref({ size: 640, dynamic: false, nativeSize: 640 })
+
   // Initialize model
   const initializeModel = async (): Promise<void> => {
     if (session.value) return
+
+    if (sharedSession) {
+      session.value = sharedSession
+      return
+    }
 
     try {
       isModelLoading.value = true
@@ -26,13 +123,20 @@ export const useImageRecognition = () => {
       // ORT will load *.jsep.mjs / *.jsep.wasm etc. under this directory using default filenames
       const base = (import.meta as any).env?.BASE_URL || '/'
       ort.env.wasm.wasmPaths = base + 'ort/'
-      session.value = await ort.InferenceSession.create(
-        base + 'models/best.onnx',
-        {
-          executionProviders: ['wasm'],
-          graphOptimizationLevel: 'all',
-        }
-      )
+      if (!sharedSessionPromise) {
+        sharedSessionPromise = createSession(base)
+          .then(created => {
+            sharedSession = created
+            return created
+          })
+          .catch(error => {
+            // Allow a later attempt to retry from scratch.
+            sharedSessionPromise = null
+            throw error
+          })
+      }
+      session.value = await sharedSessionPromise
+      resolveModelInputSize()
       status.value = t(
         'positionEditor.imageRecognitionStatus.modelLoadedSuccessfully'
       )
@@ -51,6 +155,35 @@ export const useImageRecognition = () => {
     } finally {
       isModelLoading.value = false
     }
+  }
+
+  /** Reads the graph's input shape and decides which size to run at. */
+  function resolveModelInputSize(requested?: number) {
+    const sess = session.value
+    if (!sess) return
+    const meta: any = sess.inputMetadata?.[0]
+    // Non-tensor inputs carry no shape; only tensors have `shape`.
+    const dims = (meta?.isTensor ? meta.shape : []) as Array<
+      number | string | undefined
+    >
+    const h = dims[2]
+    const w = dims[3]
+    const fixed =
+      typeof h === 'number' && h > 0 && typeof w === 'number' && w > 0
+    const nativeSize = fixed ? Math.max(h as number, w as number) : 0
+    const size = fixed
+      ? nativeSize
+      : Math.min(640, Math.max(256, Math.round(requested ?? 416)))
+    modelInput.value = { size, dynamic: !fixed, nativeSize }
+    console.log(
+      `[image-recognition] input ${JSON.stringify(dims)} -> running at ${size}px` +
+        (fixed ? ' (fixed by the model)' : ' (dynamic model)')
+    )
+  }
+
+  /** Lets the caller pick the input size; ignored by fixed-shape models. */
+  const setModelInputSize = (requested: number) => {
+    resolveModelInputSize(requested)
   }
 
   // Utility functions
@@ -160,8 +293,8 @@ export const useImageRecognition = () => {
   const preprocess = async (
     image: HTMLImageElement
   ): Promise<{ tensor: ort.Tensor; meta: ProcessedImage['meta'] }> => {
-    const modelW = 640
-    const modelH = 640
+    const modelW = modelInput.value.size
+    const modelH = modelInput.value.size
 
     const { canvas, meta } = letterbox(image, [modelH, modelW], 114)
 
@@ -513,6 +646,73 @@ export const useImageRecognition = () => {
     })
   }
 
+  // Run the model against an already decoded image element.
+  const runInference = async (
+    img: HTMLImageElement
+  ): Promise<DetectionBox[]> => {
+    inputImage.value = img
+
+    status.value = t('positionEditor.imageRecognitionStatus.preprocessingImage')
+    const prep = await preprocess(img)
+
+    status.value = t(
+      'positionEditor.imageRecognitionStatus.runningModelInference'
+    )
+    // More robust selection of input name (many exported YOLO models use 'images' as input name)
+    const inputName = session.value!.inputNames.includes('images')
+      ? 'images'
+      : session.value!.inputNames[0]
+    const feeds = { [inputName]: prep.tensor }
+    const results = await session.value!.run(feeds)
+
+    const firstOut = results.output0 || results[Object.keys(results)[0]]
+    const outputData = firstOut.data as unknown as number[]
+    const outShape = firstOut.dims as number[]
+
+    status.value = t(
+      'positionEditor.imageRecognitionStatus.postProcessingResults'
+    )
+    const boxes = postprocess(outputData, outShape, prep.meta)
+    detectedBoxes.value = boxes
+
+    status.value = t(
+      'positionEditor.imageRecognitionStatus.recognitionCompleted'
+    )
+
+    return boxes
+  }
+
+  /**
+   * Runs recognition against an image element that is already decoded.
+   *
+   * The line-connect (连线自动走棋) loop feeds screen captures here instead of
+   * going through the file picker.
+   */
+  const processImageElement = async (
+    img: HTMLImageElement
+  ): Promise<DetectionBox[]> => {
+    isProcessing.value = true
+    try {
+      status.value = t('positionEditor.imageRecognitionStatus.loadingImage')
+      await initializeModel()
+      return await runInference(img)
+    } catch (error) {
+      console.error('Image processing failed:', error)
+      status.value = t(
+        'positionEditor.imageRecognitionStatus.processingFailed',
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : t('positionEditor.imageRecognitionStatus.unknownError'),
+        }
+      )
+      throw error
+    } finally {
+      isProcessing.value = false
+    }
+  }
+
   // Process image recognition
   const processImage = async (file: File): Promise<void> => {
     try {
@@ -532,36 +732,7 @@ export const useImageRecognition = () => {
         img.src = imageUrl
       })
 
-      inputImage.value = img
-
-      status.value = t(
-        'positionEditor.imageRecognitionStatus.preprocessingImage'
-      )
-      const prep = await preprocess(img)
-
-      status.value = t(
-        'positionEditor.imageRecognitionStatus.runningModelInference'
-      )
-      // More robust selection of input name (many exported YOLO models use 'images' as input name)
-      const inputName = session.value!.inputNames.includes('images')
-        ? 'images'
-        : session.value!.inputNames[0]
-      const feeds = { [inputName]: prep.tensor }
-      const results = await session.value!.run(feeds)
-
-      const firstOut = results.output0 || results[Object.keys(results)[0]]
-      const outputData = firstOut.data as unknown as number[]
-      const outShape = firstOut.dims as number[]
-
-      status.value = t(
-        'positionEditor.imageRecognitionStatus.postProcessingResults'
-      )
-      const boxes = postprocess(outputData, outShape, prep.meta)
-      detectedBoxes.value = boxes
-
-      status.value = t(
-        'positionEditor.imageRecognitionStatus.recognitionCompleted'
-      )
+      await runInference(img)
 
       // Do not revoke immediately; keep the blob URL while the image is displayed
     } catch (error) {
@@ -579,6 +750,14 @@ export const useImageRecognition = () => {
     } finally {
       isProcessing.value = false
     }
+  }
+
+  const getBoardBox = (boxes: DetectionBox[]): DetectionBox | null => {
+    return (
+      boxes
+        .filter(b => LABELS[b.labelIndex]?.name === 'Board')
+        .sort((a, b) => b.score - a.score)[0] ?? null
+    )
   }
 
   // Update board grid
@@ -650,6 +829,10 @@ export const useImageRecognition = () => {
     outputCanvas,
     showBoundingBoxes,
     processImage,
+    processImageElement,
+    getBoardBox,
+    modelInput,
+    setModelInputSize,
     drawBoundingBoxes,
     updateBoardGrid,
     initializeModel,

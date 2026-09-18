@@ -89,7 +89,7 @@ class MainActivity : TauriActivity() {
     /**
      * 测试版专用：导入自己的 ONNX 模型。
      *
-     * ONNX 没有统一的 MIME 类型，所以选择器放开成 */*，选完再按扩展名判断，
+     * ONNX 没有统一的 MIME 类型，所以选择器不设过滤，选完再按扩展名判断，
      * 免得不同文件管理器对 octet-stream 的过滤行为不一致、把模型文件藏起来。
      */
     private val modelFileSelectionLauncher = registerForActivityResult(

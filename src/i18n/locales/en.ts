@@ -120,6 +120,17 @@ export default {
     modelLoading: 'Loading…',
     modelReloadHint: 'Takes effect when you start line connect again',
     modelDevOnly: 'Test build only',
+    modelKind: 'Recognition',
+    kindDetector: 'Full-frame detection',
+    kindClassifier: 'Per-cell classification',
+    kindHintDetector: 'Locates board and pieces across the whole frame',
+    kindHintClassifier: 'Detector locates the board, then each cell is classified',
+    classifierClasses: 'Model classes',
+    classifierNoBoard: 'Could not locate the board — frame it manually in settings, or use a detection model',
+    classifierMismatch: '{n} cells are outside the app class table; recognition may be off',
+    classifierAligned: 'Matches the app class table',
+    gridConfidence: 'Grid confidence',
+    gridConfidenceLow: 'low — board alignment may be unstable',
   },
   // Common
   common: {

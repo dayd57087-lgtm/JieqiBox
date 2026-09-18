@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>训练数据体检</title>
+<style>
+body{background:#14161a;color:#e6e8eb;font:12px/1.5 ui-monospace,monospace;margin:0;padding:10px}
+pre{white-space:pre-wrap}
+canvas{display:block;background:#000;border-radius:6px;margin:6px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(52px,1fr));gap:4px;margin:6px 0}
+.cell{background:#0c0e11;border-radius:4px;padding:2px;text-align:center}
+.cell canvas{width:100%;height:auto;image-rendering:pixelated;border-radius:3px;margin:0}
+.cell span{font-size:8px;color:#9aa1ad;display:block;line-height:1.2}
+</style>
+</head>
+<body>
+<pre id="out">运行中…</pre>
+<div id="shots"></div>
+
+<script src="https://registry.npmmirror.com/@tensorflow/tfjs/4.22.0/files/dist/tf.min.js"></script>
+<script>
+const el = document.getElementById('out');
+let buf=''; const log=m=>{buf+=m+'\n';el.textContent=buf};
+const shots=document.getElementById('shots');
+
+const CLASSES = ['empty','r_general','r_advisor','r_elephant','r_horse','r_chariot','r_cannon','r_soldier',
+                 'b_general','b_advisor','b_elephant','b_horse','b_chariot','b_cannon','b_soldier','dark'];
+const CHAR = {1:'帅',2:'仕',3:'相',4:'马',5:'车',6:'炮',7:'兵',8:'将',9:'士',10:'象',11:'马',12:'车',13:'炮',14:'卒'};
+const GT = { x0:46.5, dx:(796.5-46.5)/8, y0:46.5, dy:(890.5-46.5)/9, W:844, H:938 };
+const COLS=9, ROWS=10, CELLS=90;
+
+function drawPiece(ctx,cx,cy,d,cls){
+  const r=d/2, red=cls<=7, isDark=cls===15;
+  ctx.beginPath();ctx.arc(cx,cy,r,0,7);
+  ctx.fillStyle=isDark?'#6f6f6f':'#f2e3c4';ctx.fill();
+  ctx.lineWidth=Math.max(1.5,r*0.09);
+  ctx.strokeStyle=isDark?'#2a2a2a':(red?'#c62828':'#1a1a1a');ctx.stroke();
+  ctx.beginPath();ctx.arc(cx,cy,r*0.74,0,7);
+  ctx.lineWidth=Math.max(1,r*0.05);ctx.stroke();
+  ctx.fillStyle=isDark?'#d0d0d0':(red?'#c62828':'#1a1a1a');
+  ctx.font=`bold ${Math.round(r*1.1)}px "PingFang SC",serif`;
+  ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText(isDark?'暗':(CHAR[cls]||'?'),cx,cy);
+}
+
+(async () => {
+  const boardImg = await new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src='/test/xiangqi.png'});
+  log('棋盘图 '+boardImg.naturalWidth+'×'+boardImg.naturalHeight);
+  log('后端 '+(function(){return tf.getBackend()})());
+
+  // 字体能不能渲染汉字？渲染不出来就没有区分度，这是最可疑的一点
+  const fc = document.createElement('canvas'); fc.width=200; fc.height=60;
+  const fx = fc.getContext('2d');
+  fx.fillStyle='#fff'; fx.font='40px "PingFang SC",serif'; fx.textBaseline='top';
+  fx.fillText('帅车马炮', 4, 4);
+  const fd = fx.getImageData(0,0,200,60).data;
+  let ink=0; for(let i=0;i<fd.length;i+=4) if (fd[i]>40) ink++;
+  log('汉字渲染墨迹像素: '+ink+' '+(ink>200?'(字体可用)':'(字体缺失！所有红子会长一样)'));
+  const wrapF=document.createElement('div'); wrapF.innerHTML='<div style="color:#9aa1ad">字体测试：应显示「帅车马炮」</div>';
+  wrapF.appendChild(fc); shots.appendChild(wrapF);
+
+  // ── 渲染一张训练用的截图 ──
+  const W=1080,H=2340, scale=1.09;
+  const ox=Math.round((W-GT.W*scale)/2), oy=Math.round(200+Math.random()*100);
+  const cv=document.createElement('canvas'); cv.width=W; cv.height=H;
+  const c=cv.getContext('2d');
+  c.fillStyle='#2b2f36';c.fillRect(0,0,W,H);
+  c.fillStyle='#1e2127';c.fillRect(0,0,W,190);
+  c.drawImage(boardImg, ox, oy, GT.W*scale, GT.H*scale);
+
+  // 故意只放 6 颗子，位置固定，方便肉眼核对
+  const placed = [
+    [0,0,1],[0,8,8],[3,4,2],[7,2,9],[9,4,15],[5,6,6],
+  ];
+  const cells=new Array(CELLS).fill(0);
+  for (const [r,col,cls] of placed){
+    cells[r*COLS+col]=cls;
+    drawPiece(c, ox+(GT.x0+col*GT.dx)*scale, oy+(GT.y0+r*GT.dy)*scale, GT.dx*scale, cls);
+  }
+  const lat = { x0: ox+GT.x0*scale, dx: GT.dx*scale, y0: oy+GT.y0*scale, dy: GT.dy*scale };
+
+  // 整图 + 晶格
+  const vis=document.createElement('canvas'); vis.width=W; vis.height=H;
+  const vc=vis.getContext('2d'); vc.drawImage(cv,0,0);
+  vc.strokeStyle='#4c8dff'; vc.lineWidth=3;
+  for(let i=0;i<COLS;i++){vc.beginPath();vc.moveTo(lat.x0+i*lat.dx,lat.y0);vc.lineTo(lat.x0+i*lat.dx,lat.y0+(ROWS-1)*lat.dy);vc.stroke()}
+  for(let r=0;r<ROWS;r++){vc.beginPath();vc.moveTo(lat.x0,lat.y0+r*lat.dy);vc.lineTo(lat.x0+(COLS-1)*lat.dx,lat.y0+r*lat.dy);vc.stroke()}
+  const w0=document.createElement('div'); w0.innerHTML='<div style="color:#9aa1ad">源截图 + 晶格（应有 6 颗子：左上帅 / 右上将 / 4行中仕 / 8行中士 / 底中暗 / 6行右炮）</div>';
+  w0.appendChild(vis); shots.appendChild(w0);
+
+  // ── 按晶格切格，平铺出来 ──
+  const SIZE=48, CROP_K=1.14;
+  const tmp=document.createElement('canvas'); tmp.width=SIZE; tmp.height=SIZE;
+  const tc=tmp.getContext('2d',{willReadFrequently:true});
+  const side=Math.max(lat.dx,lat.dy)*CROP_K;
+  log('');
+  log('切格：side='+side.toFixed(1)+'px（格子 '+lat.dx.toFixed(1)+'px，系数 '+CROP_K+'）');
+  log('切片尺寸 '+SIZE+'（这里放大到 48 便于肉眼检查）');
+
+  const grid=document.createElement('div'); grid.className='grid';
+  const nonEmptyCells=[];
+  for(let r=0;r<ROWS;r++) for(let col=0;col<COLS;col++){
+    const idx=r*COLS+col, cls=cells[idx];
+    const cx=lat.x0+col*lat.dx, cy=lat.y0+r*lat.dy;
+    tc.clearRect(0,0,SIZE,SIZE);
+    tc.drawImage(cv, cx-side/2, cy-side/2, side, side, 0,0,SIZE,SIZE);
+    if (cls>0 || (r<2 && col<3) || (r===3&&col===4)) {
+      const cell=document.createElement('div'); cell.className='cell';
+      const cc=document.createElement('canvas'); cc.width=SIZE; cc.height=SIZE;
+      cc.getContext('2d').drawImage(tmp,0,0);
+      cell.appendChild(cc);
+      const sp=document.createElement('span');
+      sp.textContent = (cls>0?CLASSES[cls]:'空')+' ('+r+','+col+')';
+      cell.appendChild(sp);
+      grid.appendChild(cell);
+    }
+    if (cls>0) nonEmptyCells.push({idx,cls,r,col});
+  }
+  const w1=document.createElement('div');
+  w1.innerHTML='<div style="color:#9aa1ad">按晶格切出来的格子（应能看到棋子居中：帅/将/仕/士/暗/炮）</div>';
+  w1.appendChild(grid); shots.appendChild(w1);
+
+  log('');
+  log('非空格子清单：');
+  for (const n of nonEmptyCells) log('  ('+n.r+','+n.col+') idx='+n.idx+' → '+CLASSES[n.cls]);
+
+  window.__done=true;
+})().catch(e=>{log('异常 '+e.message);window.__done=true});
+</script>
+</body>
+</html>

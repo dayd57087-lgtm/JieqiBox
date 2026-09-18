@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>逐格分类通路 · 端到端验证</title>
+<style>
+body{background:#14161a;color:#e6e8eb;font:12px/1.55 ui-monospace,monospace;margin:0;padding:10px}
+pre{white-space:pre-wrap;word-break:break-all}
+.ok{color:#35c46a;font-weight:600}.bad{color:#ff5a5a;font-weight:600}.dim{color:#9aa1ad}
+canvas{display:block;width:100%;border-radius:6px;background:#000;margin:6px 0}
+h2{font-size:13px;color:#4c8dff;margin:12px 0 4px}
+</style>
+</head>
+<body>
+<pre id="out">加载中…</pre>
+<div id="shots"></div>
+
+<script src="https://registry.npmmirror.com/@tensorflow/tfjs/4.22.0/files/dist/tf.min.js"></script>
+<script src="/test/onnx-export.js"></script>
+<script type="module">
+import * as ort from 'onnxruntime-web'
+import { createClassifier, classifyBoard, labelIndexOf } from '/src/composables/image-recognition/cellClassifier.ts'
+import { LABELS } from '/src/composables/image-recognition/types.ts'
+
+/** 应用 labelIndex -> 类别名，用于把检测框反查回类别 */
+const RECOG_NAME = {}
+for (const [k, v] of Object.entries(LABELS)) RECOG_NAME[Number(k)] = v.name
+
+const el = document.getElementById('out')
+let buf = ''
+const log = m => { buf += m + '\n'; el.textContent = buf }
+const ok = m => `<span class="ok">${m}</span>`
+const bad = m => `<span class="bad">${m}</span>`
+const dim = m => `<span class="dim">${m}</span>`
+const shots = document.getElementById('shots')
+
+// ── 与 Model Studio 完全一致的类别与几何 ──────────────────────────
+const CLASSES = ['empty','r_general','r_advisor','r_elephant','r_horse','r_chariot','r_cannon','r_soldier',
+                 'b_general','b_advisor','b_elephant','b_horse','b_chariot','b_cannon','b_soldier','dark']
+const CHAR = {1:'帅',2:'仕',3:'相',4:'马',5:'车',6:'炮',7:'兵',8:'将',9:'士',10:'象',11:'马',12:'车',13:'炮',14:'卒'}
+const GT = { x0: 46.5, dx: (796.5-46.5)/8, y0: 46.5, dy: (890.5-46.5)/9, W: 844, H: 938 }
+const COLS = 9, ROWS = 10, CELLS = COLS*ROWS
+
+function drawPiece(ctx, cx, cy, d, cls) {
+  const r = d/2, red = cls <= 7, isDark = cls === 15
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, 7)
+  ctx.fillStyle = isDark ? '#6f6f6f' : '#f2e3c4'
+  ctx.fill()
+  ctx.lineWidth = Math.max(1.5, r*0.09)
+  ctx.strokeStyle = isDark ? '#2a2a2a' : (red ? '#c62828' : '#1a1a1a')
+  ctx.stroke()
+  ctx.beginPath(); ctx.arc(cx, cy, r*0.74, 0, 7)
+  ctx.lineWidth = Math.max(1, r*0.05)
+  ctx.stroke()
+  ctx.fillStyle = isDark ? '#d0d0d0' : (red ? '#c62828' : '#1a1a1a')
+  ctx.font = `bold ${Math.round(r*1.1)}px "PingFang SC",serif`
+  ctx.textAlign='center'; ctx.textBaseline='middle'
+  ctx.fillText(isDark ? '暗' : (CHAR[cls]||'?'), cx, cy)
+}
+
+function randomCells(n) {
+  const cells = new Array(CELLS).fill(0)
+  const order = [...Array(CELLS).keys()].sort(() => Math.random()-0.5)
+  for (let i=0;i<n;i++){
+    const red = Math.random()<0.5, dark = Math.random()<0.35
+    cells[order[i]] = dark ? 15 : (red ? 1+Math.floor(Math.random()*7) : 8+Math.floor(Math.random()*7))
+  }
+  return cells
+}
+
+/** 渲染一张模拟对局截图，返回画布与精确晶格 */
+function renderShot(boardImg, opts) {
+  const { W=1080, H=2340, scale, ox, oy, nPieces } = opts
+  const cv = document.createElement('canvas'); cv.width=W; cv.height=H
+  const c = cv.getContext('2d')
+  c.fillStyle='#2b2f36'; c.fillRect(0,0,W,H)
+  c.fillStyle='#1e2127'; c.fillRect(0,0,W,190)
+  c.fillStyle='#111'; c.fillRect(0,H-120,W,120)
+  c.drawImage(boardImg, ox, oy, GT.W*scale, GT.H*scale)
+
+  const cells = randomCells(nPieces)
+  for (let r=0;r<ROWS;r++) for (let col=0;col<COLS;col++){
+    const cls = cells[r*COLS+col]; if (!cls) continue
+    drawPiece(c, ox + (GT.x0+col*GT.dx)*scale, oy + (GT.y0+r*GT.dy)*scale, GT.dx*scale, cls)
+  }
+  const lattice = {
+    x0: ox + GT.x0*scale, dx: GT.dx*scale,
+    y0: oy + GT.y0*scale, dy: GT.dy*scale,
+  }
+  return { cv, cells, lattice, W, H }
+}
+
+async function main() {
+  if (typeof tf === 'undefined') { log('tfjs 未加载'); return }
+  if (typeof OnnxExport === 'undefined') { log('onnx-export.js 未加载'); return }
+  // 不设 wasmPaths 的话 ORT 会按模块 URL 去找 .wasm，dev server 返回的是 HTML
+  ort.env.wasm.wasmPaths = '/ort/'
+  ort.env.logLevel = 'error'
+  await tf.setBackend('webgl').catch(()=>{})
+  await tf.ready()
+  log('tfjs ' + tf.version.tfjs + ' · backend ' + tf.getBackend())
+
+  const boardImg = await new Promise((res, rej) => {
+    const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = '/test/xiangqi.png'
+  })
+  log('棋盘图 ' + boardImg.naturalWidth + '×' + boardImg.naturalHeight)
+  log('')
+
+  // ───────── 1) 造训练数据：用「已知晶格」切格，模拟工坊里的标注 ─────────
+  log('[1/5] 生成训练数据…')
+  const SIZE = 24, CROP_K = 1.14
+  const tmp = document.createElement('canvas'); tmp.width=SIZE; tmp.height=SIZE
+  const tctx = tmp.getContext('2d', { willReadFrequently: true })
+
+  function cropWithLattice(src, lat, size) {
+    const side = Math.max(lat.dx, lat.dy) * CROP_K
+    const out = new Float32Array(CELLS*size*size*3)
+    let p = 0
+    for (let r=0;r<ROWS;r++) for (let c=0;c<COLS;c++){
+      const cx = lat.x0 + c*lat.dx, cy = lat.y0 + r*lat.dy
+      tctx.clearRect(0,0,size,size)
+      tctx.drawImage(src, cx-side/2, cy-side/2, side, side, 0,0,size,size)
+      const d = tctx.getImageData(0,0,size,size).data
+      for (let i=0;i<size*size;i++){ out[p++]=d[i*4]/255; out[p++]=d[i*4+1]/255; out[p++]=d[i*4+2]/255 }
+    }
+    return out
+  }
+
+  const N_DECKS = 26
+  const xsParts = [], ysParts = []
+  for (let d=0; d<N_DECKS; d++){
+    const scale = 1.0 + Math.random()*0.18
+    const shot = renderShot(boardImg, {
+      scale,
+      ox: Math.round((1080-GT.W*scale)/2 + (Math.random()-0.5)*40),
+      oy: Math.round(200 + Math.random()*120),
+      nPieces: 22 + Math.floor(Math.random()*14),
+    })
+    xsParts.push(cropWithLattice(shot.cv, shot.lattice, SIZE))
+    ysParts.push(shot.cells.slice())
+    if (d % 6 === 5) await new Promise(r => setTimeout(r, 0))
+  }
+  const nSamples = N_DECKS * CELLS
+  const xsArr = new Float32Array(nSamples*SIZE*SIZE*3)
+  const PX_PER_DECK = CELLS * SIZE * SIZE * 3
+  xsParts.forEach((p,i) => xsArr.set(p, i*PX_PER_DECK))
+  const ysArr = new Int32Array(ysParts.flat())
+  log(`  ${N_DECKS} 张图 · ${nSamples} 个格子`)
+
+  // ───────── 2) 训练 ─────────
+  log('[2/5] 训练…')
+  const model = tf.sequential()
+  model.add(tf.layers.conv2d({ inputShape:[SIZE,SIZE,3], filters:16, kernelSize:3, padding:'same', activation:'relu' }))
+  model.add(tf.layers.maxPooling2d({ poolSize:2 }))
+  model.add(tf.layers.conv2d({ filters:32, kernelSize:3, padding:'same', activation:'relu' }))
+  model.add(tf.layers.maxPooling2d({ poolSize:2 }))
+  model.add(tf.layers.conv2d({ filters:48, kernelSize:3, padding:'same', activation:'relu' }))
+  model.add(tf.layers.maxPooling2d({ poolSize:2 }))
+  model.add(tf.layers.flatten())
+  model.add(tf.layers.dense({ units:96, activation:'relu' }))
+  model.add(tf.layers.dropout({ rate:0.25 }))
+  model.add(tf.layers.dense({ units:CLASSES.length }))
+  // 注意：模型最后是线性输出（logits），必须配 softmaxCrossEntropy。
+  // TF.js 的 'categoricalCrossentropy' 假定输入已经是概率分布，
+  // 直接喂 logits 会算出 NaN/垃圾，表现为「loss 比随机还高、怎么也学不会」。
+  model.compile({
+    optimizer: tf.train.adam(1e-3),
+    loss: (yTrue, yPred) => tf.losses.softmaxCrossEntropy(yTrue, yPred),
+    metrics: ['accuracy'],
+  })
+
+  const xs = tf.tensor4d(xsArr, [nSamples, SIZE, SIZE, 3])
+  const ys = tf.oneHot(tf.tensor1d(ysArr, 'int32'), CLASSES.length)
+  const t0 = performance.now()
+  const hist = []
+  // 逐轮调用 fit(epochs:1)，轮与轮之间用 setTimeout 让步。
+  // 不能用一次 fit(epochs:N)：tf.js 内部会在轮间等 requestAnimationFrame，
+  // 而后台标签页的 rAF 根本不触发，训练会永远停在那里。
+  const EPOCHS = 12
+  for (let ep = 0; ep < EPOCHS; ep++) {
+    const r = await model.fit(xs, ys, { epochs: 1, batchSize: 64, verbose: 0, shuffle: true })
+    const l = r.history
+    hist.push(`#${ep+1} loss ${l.loss[0].toFixed(3)} acc ${(l.acc[0]*100).toFixed(1)}%`)
+    await new Promise(res => setTimeout(res, 0))
+  }
+  const trainS = (performance.now()-t0)/1000
+  log('  ' + hist.slice(-3).join(' · '))
+  // 训练集上的准确率：和「1/16=6.25% 的瞎猜」比，能立刻看出是真在学还是在发散
+  const trainEval = model.evaluate(xs, ys)
+  const trainAcc = (await trainEval[1].data())[0]
+  trainEval.forEach(t => t.dispose())
+  log('  用时 ' + trainS.toFixed(1) + 's · 参数 ' + model.countParams()
+      + ' · 训练集准确率 ' + (trainAcc*100).toFixed(1) + '% ' + (trainAcc > 0.5 ? ok('(在学)') : bad('(没学会)')))
+  log('')
+
+  // ───────── 3) 导出 ONNX 并用真实代码加载 ─────────
+  log('[3/5] 导出 ONNX → 用真实 classifyBoard 加载')
+  const built = OnnxExport.buildOnnx(model, {
+    size: SIZE, numClasses: CLASSES.length,
+    meta: {
+      labels: CLASSES.join(','),
+      input_size: `${SIZE}x${SIZE}`,
+      input_layout: 'NHWC',
+      output: 'logits',
+      grid: '9x10',
+      crop_k: String(CROP_K),
+      note: 'e2e test',
+    }
+  })
+  log(`  导出 ${built.bytes.length} 字节`)
+
+  const handle = await createClassifier(built.bytes, { executionProviders: ['wasm'] })
+  if (!handle) { log(bad('✗ createClassifier 拒绝了这份模型')); return }
+
+  // 这一条同时验证了 onnxMeta 读元数据与 labelIndexOf 的映射
+  const labelsOk = handle.labels.length === CLASSES.length &&
+                   handle.labels.every((n,i) => n === CLASSES[i])
+  log('  类别 ' + handle.labels.length + ' 个 · 元数据读取 ' + (labelsOk ? ok('正确') : bad('不一致')))
+  log('  输入边长 ' + handle.inputSize + ' · 裁切系数 ' + handle.cropK)
+  if (!labelsOk) log('  实际读到: ' + JSON.stringify(handle.labels))
+
+  const mapped = CLASSES.filter(n => n !== 'empty').map(n => [n, labelIndexOf(n)])
+  const unmappedNames = mapped.filter(([,i]) => i < 0).map(([n]) => n)
+  log('  映射到应用类别: ' + (unmappedNames.length === 0
+      ? ok(`${mapped.length}/${mapped.length} 全部命中`)
+      : bad('未命中 ' + unmappedNames.join(','))))
+  log('')
+
+  // ───────── 4) 在没见过的截图上跑完整通路 ─────────
+  log('[4/5] 新截图 → 标定 → 逐格分类')
+  log('  A=检测器给的棋盘框（产品主路径） · B=没有检测器时自己扫（兜底）')
+  const RESULTS = []
+  const TRIALS = ['B', 'B', 'B', 'A', 'A']
+  for (let trial = 0; trial < TRIALS.length; trial++) {
+    const mode = TRIALS[trial]
+    const scale = 1.0 + Math.random()*0.18
+    const shot = renderShot(boardImg, {
+      scale,
+      ox: Math.round((1080-GT.W*scale)/2 + (Math.random()-0.5)*40),
+      oy: Math.round(200 + Math.random()*120),
+      nPieces: 24 + Math.floor(Math.random()*12),
+    })
+
+    // A：模拟检测器输出 —— 给一个略有余量的棋盘外接框
+    // B：完全不给，走兜底自标定
+    const pad = 0.08
+    const rough = mode === 'A'
+      ? {
+          x: shot.lattice.x0 - shot.lattice.dx * (0.5 + pad),
+          y: shot.lattice.y0 - shot.lattice.dy * (0.5 + pad),
+          w: shot.lattice.dx * (COLS + pad * 2),
+          h: shot.lattice.dy * (ROWS + pad * 2),
+        }
+      : null
+    const t1 = performance.now()
+    const res = await classifyBoard(shot.cv, handle, rough)
+    const ms = performance.now()-t1
+    if (!res) { log(bad('  ✗ 未能定位棋盘')); continue }
+
+    // 拟合出来的晶格 vs 真实晶格
+    const dX0 = Math.abs(res.grid.x0 - shot.lattice.x0)
+    const dY0 = Math.abs(res.grid.y0 - shot.lattice.y0)
+    const dDx = Math.abs(res.grid.dx - shot.lattice.dx)
+    const dDy = Math.abs(res.grid.dy - shot.lattice.dy)
+    const worstCell = Math.max(dX0, dY0) / shot.lattice.dx + Math.max(dDx*4, dDy*4.5)/shot.lattice.dx
+
+    // 把预测结果映射回 9×10 网格
+    const pred = new Array(CELLS).fill(0)
+    for (const b of res.boxes) {
+      const cx = b.box[0] + b.box[2]/2
+      const cy = b.box[1] + b.box[3]/2
+      const c = Math.round((cx - res.grid.x0)/res.grid.dx)
+      const r = Math.round((cy - res.grid.y0)/res.grid.dy)
+      if (r<0||r>=ROWS||c<0||c>=COLS) continue
+      // 用类别名反查 studio 索引
+      const idx = CLASSES.indexOf(RECOG_NAME[b.labelIndex] || '')
+      if (idx > 0) pred[r*COLS+c] = idx
+    }
+
+    let cellOk = 0, nonEmpty = 0, nonEmptyOk = 0, emptyOk = 0, emptyTotal = 0
+    for (let i=0;i<CELLS;i++){
+      const g = shot.cells[i], p = pred[i]
+      if (g === p) { cellOk++; if (g>0) nonEmptyOk++; else emptyOk++ }
+      if (g>0) nonEmpty++
+      if (g===0) emptyTotal++
+    }
+
+    // 直接看分类器对每个格子的判断（不走框映射），更纯粹的精度
+    let rawOk = 0, rawNonEmpty = 0, rawNonEmptyOk = 0
+    for (let i=0;i<CELLS;i++){
+      const g = CLASSES[shot.cells[i]]
+      const p = res.cellLabels[i]
+      if (g === p) { rawOk++; if (shot.cells[i]>0) rawNonEmptyOk++ }
+      if (shot.cells[i]>0) rawNonEmpty++
+    }
+
+    RESULTS.push({ mode, worstCell, conf: res.grid.confidence, ms, rawOk, rawNonEmpty, rawNonEmptyOk,
+                   cellOk, nonEmpty, nonEmptyOk, emptyOk, emptyTotal,
+                   unmapped: res.unmapped,
+                   pred, truth: shot.cells, cv: shot.cv, lattice: shot.lattice, grid: res.grid })
+
+    log(`  第 ${trial+1} 张 · 方式 ${mode}:`)
+    log(`    晶格误差 左上 ${dX0.toFixed(1)}/${dY0.toFixed(1)}px · 间距 ${dDx.toFixed(2)}/${dDy.toFixed(2)}px`
+        + ` · 最大累计 ${(worstCell*100).toFixed(2)}% 格 · 置信度 ${res.grid.confidence.toFixed(1)}`
+        + ` · edgeRatio ${(res.grid.edgeRatio ?? -1).toFixed(2)}`)
+    log(`    逐格分类 整体 ${(rawOk/CELLS*100).toFixed(1)}% · 非空格 ${(rawNonEmptyOk/Math.max(1,rawNonEmpty)*100).toFixed(1)}%`
+        + `   ${rawOk/CELLS > 0.95 ? ok('✓') : bad('✗')}`)
+    log(`    整链路口径 空格 ${emptyOk}/${emptyTotal} · 非空 ${nonEmptyOk}/${nonEmpty} · 耗时 ${ms.toFixed(0)}ms`)
+    if (res.unmapped) log(bad(`    有 ${res.unmapped} 格未映射到应用类别`))
+
+    // 可视化
+    const vis = document.createElement('canvas')
+    vis.width = shot.W; vis.height = shot.H
+    const vc = vis.getContext('2d')
+    vc.drawImage(shot.cv, 0, 0)
+    vc.strokeStyle = '#4c8dff'; vc.lineWidth = 2
+    const g = res.grid
+    for (let c=0;c<COLS;c++){ vc.beginPath(); vc.moveTo(g.x0+c*g.dx, g.y0); vc.lineTo(g.x0+c*g.dx, g.y0+(ROWS-1)*g.dy); vc.stroke() }
+    for (let r=0;r<ROWS;r++){ vc.beginPath(); vc.moveTo(g.x0, g.y0+r*g.dy); vc.lineTo(g.x0+(COLS-1)*g.dx, g.y0+r*g.dy); vc.stroke() }
+    // 错分的格子标红
+    vc.lineWidth = 4
+    for (let r=0;r<ROWS;r++) for (let c=0;c<COLS;c++){
+      const i = r*COLS+c
+      if (CLASSES[shot.cells[i]] === res.cellLabels[i]) continue
+      vc.strokeStyle = '#ff5a5a'
+      vc.beginPath()
+      vc.arc(g.x0+c*g.dx, g.y0+r*g.dy, Math.min(g.dx,g.dy)*0.5, 0, 7)
+      vc.stroke()
+    }
+    const wrap = document.createElement('div')
+    wrap.innerHTML = `<div class="dim">第 ${trial+1} 张 · 方式 ${mode} · 蓝线=拟合晶格 · 红圈=分类错的格子</div>`
+    wrap.appendChild(vis)
+    shots.appendChild(wrap)
+    await new Promise(r => setTimeout(r, 0))
+  }
+
+  // ───────── 5) 汇总 ─────────
+  log('')
+  log('[5/5] 汇总')
+  if (!RESULTS.length) { log(bad('没有一次成功')); window.__done = true; return }
+  const stat = (rs) => rs.length ? {
+    cell: rs.reduce((s,r)=>s+r.rawOk/CELLS, 0)/rs.length,
+    ne: rs.reduce((s,r)=>s+r.rawNonEmptyOk/Math.max(1,r.rawNonEmpty), 0)/rs.length,
+    worst: rs.reduce((s,r)=>s+r.worstCell, 0)/rs.length,
+    ms: rs.reduce((s,r)=>s+r.ms, 0)/rs.length,
+  } : null
+
+  const A = stat(RESULTS.filter(r=>r.mode==='A'))
+  const B = stat(RESULTS.filter(r=>r.mode==='B'))
+
+  if (A) {
+    log('  A 方式 · 检测器定位（产品主路径）')
+    log('    晶格最大累计偏差 ' + (A.worst*100).toFixed(2) + '% 格 ' + (A.worst<0.05?ok('✓'):bad('✗')))
+    log('    逐格分类 整体 ' + (A.cell*100).toFixed(1) + '% · 非空 ' + (A.ne*100).toFixed(1) + '% '
+        + (A.ne>0.9?ok('✓'):bad('✗')) + ' · 平均 ' + A.ms.toFixed(0) + 'ms')
+  }
+  if (B) {
+    log('  B 方式 · 兜底自标定（无检测器）')
+    log('    晶格最大累计偏差 ' + (B.worst*100).toFixed(2) + '% 格')
+    log('    逐格分类 整体 ' + (B.cell*100).toFixed(1) + '% · 非空 ' + (B.ne*100).toFixed(1) + '%'
+        + ' · 平均 ' + B.ms.toFixed(0) + 'ms')
+  }
+  log('')
+  const pass = A && A.cell > 0.95 && A.worst < 0.05
+  log(pass
+      ? ok('═══ 主路径端到端可用（检测器定位 + 逐格分类）═══')
+      : bad('═══ 主路径有问题 ═══'))
+  window.__done = true
+}
+window.__done = false
+main().catch(e => { log('异常: ' + (e && e.stack || e)); window.__done = true })
+</script>
+</body>
+</html>

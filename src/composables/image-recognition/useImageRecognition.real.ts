@@ -3,6 +3,16 @@ import { useI18n } from 'vue-i18n'
 import * as ort from 'onnxruntime-web'
 // Import types from the new file
 import { LABELS, type DetectionBox, type ProcessedImage } from './types'
+import {
+  createClassifier,
+  classifyBoard,
+  boardRoughFrom,
+  labelIndexOf,
+  inspectSession,
+  type ClassifierHandle,
+  type ModelKind,
+} from './cellClassifier'
+import { GRID_COLS, GRID_ROWS, type RoughBox } from './gridFit'
 
 /**
  * The ONNX session is expensive to build (tens of megabytes of weights), so it
@@ -11,6 +21,14 @@ import { LABELS, type DetectionBox, type ProcessedImage } from './types'
  */
 let sharedSession: ort.InferenceSession | null = null
 let sharedSessionPromise: Promise<ort.InferenceSession> | null = null
+
+/** 导入的模型是逐格分类器时，走分类通路的句柄。 */
+let sharedClassifier: ClassifierHandle | null = null
+
+/** 用于给分类通路提供棋盘框的检测器。与 sharedSession 可能不是同一个会话：
+ *  用户导入分类器时，棋盘定位仍然靠内置检测器。 */
+let detectorSession: ort.InferenceSession | null = null
+let detectorPromise: Promise<ort.InferenceSession | null> | null = null
 
 /** 当前实际生效的模型来源，测试版界面会显示它。 */
 export const modelSource = ref<'builtin' | 'imported'>('builtin')
@@ -72,8 +90,32 @@ async function createSession(base: string): Promise<ort.InferenceSession> {
       const b64 = bridge.readModel()
       if (b64) {
         const name = bridge.modelName() || '导入的模型'
-        console.log(`[image-recognition] 使用导入的模型 ${name}，${b64.length} 字符 base64`)
-        const created = await ort.InferenceSession.create(base64ToBytes(b64), options)
+        const bytes = base64ToBytes(b64)
+
+        // 先当逐格分类器试。分类器的输出是 [N, classes] 且 classes 很小，
+        // 检测器是 [1, 4+classes, 候选框数]，靠输出形状就能分开。
+        try {
+          const clf = await createClassifier(bytes, { executionProviders: ['wasm'] })
+          if (clf) {
+            sharedClassifier = clf
+            console.log(
+              `[image-recognition] 导入的是逐格分类器：${clf.labels.length} 类 · ` +
+                `输入 ${clf.inputSize}×${clf.inputSize} · 裁切 ×${clf.cropK}`
+            )
+            // 分类器只回答「这格是什么子」，不负责找棋盘 —— 仍然用内置检测器定位
+            void ensureDetector(base, options)
+            modelSource.value = 'imported'
+            importedModelName.value = name
+            return clf.session
+          }
+        } catch (e) {
+          console.warn('[image-recognition] 按分类器加载失败，改按检测器试', e)
+        }
+
+        const created = await ort.InferenceSession.create(bytes, options)
+        const insp = inspectSession(created)
+        console.log(`[image-recognition] 导入的模型按检测器使用 · 输出 ${JSON.stringify(insp.outputDims)}`)
+        sharedClassifier = null
         modelSource.value = 'imported'
         importedModelName.value = name
         return created
@@ -83,9 +125,36 @@ async function createSession(base: string): Promise<ort.InferenceSession> {
     }
   }
 
+  sharedClassifier = null
   modelSource.value = 'builtin'
   importedModelName.value = ''
   return ort.InferenceSession.create(base + 'models/best.onnx', options)
+}
+
+/**
+ * 确保内置检测器可用，供分类通路定位棋盘。
+ * 加载失败不影响分类本身 —— 会退回自己扫一遍晶格。
+ */
+function ensureDetector(
+  base: string,
+  options: { executionProviders: readonly string[]; graphOptimizationLevel: 'all' }
+): Promise<ort.InferenceSession | null> {
+  if (detectorSession) return Promise.resolve(detectorSession)
+  if (!detectorPromise) {
+    detectorPromise = ort.InferenceSession
+      .create(base + 'models/best.onnx', options as any)
+      .then(s => {
+        detectorSession = s
+        console.log('[image-recognition] 定位用检测器已就绪')
+        return s
+      })
+      .catch(e => {
+        console.warn('[image-recognition] 定位用检测器不可用，分类通路将自行标定', e)
+        detectorPromise = null
+        return null
+      })
+  }
+  return detectorPromise
 }
 
 export const useImageRecognition = () => {
@@ -98,6 +167,24 @@ export const useImageRecognition = () => {
   const inputImage = ref<HTMLImageElement | null>(null)
   const outputCanvas = ref<HTMLCanvasElement | null>(null)
   const showBoundingBoxes = ref(true)
+
+  /** 当前识别方式：导入分类器后自动切换到 classifier */
+  const recognitionMode = ref<ModelKind>('detector')
+  /** 分类器的类别名，界面用来显示模型是否与应用对得上 */
+  const classifierLabels = ref<string[]>([])
+  /** 最近一次晶格拟合的置信度 */
+  const lastGridConfidence = ref(0)
+  /** 最近一次逐格分类的结果（90 个格子的类别名），用于诊断显示 */
+  const lastCellLabels = ref<string[]>([])
+  /** 模型给出的类别名在应用里找不到对应的格数 */
+  const classifierUnmapped = ref(0)
+  /** 连续多少帧没能从检测器拿到棋盘框（说明定位在退化） */
+  const detectorBoardMisses = ref(0)
+
+  function refreshRecognitionMode() {
+    recognitionMode.value = sharedClassifier ? 'classifier' : 'detector'
+    classifierLabels.value = sharedClassifier ? sharedClassifier.labels.slice() : []
+  }
 
   /**
    * Effective model input size and whether the loaded model accepts dynamic
@@ -136,7 +223,17 @@ export const useImageRecognition = () => {
           })
       }
       session.value = await sharedSessionPromise
-      resolveModelInputSize()
+      refreshRecognitionMode()
+      // 分类器模式下 modelInput.size 要反映分类器的输入边长，否则界面显示的是检测器的 416/640
+      if (sharedClassifier) {
+        modelInput.value = {
+          size: sharedClassifier.inputSize,
+          dynamic: false,
+          nativeSize: sharedClassifier.inputSize,
+        }
+      } else {
+        resolveModelInputSize()
+      }
       status.value = t(
         'positionEditor.imageRecognitionStatus.modelLoadedSuccessfully'
       )
@@ -646,12 +743,11 @@ export const useImageRecognition = () => {
     })
   }
 
-  // Run the model against an already decoded image element.
-  const runInference = async (
-    img: HTMLImageElement
+  // 把检测通路抽出来，分类通路需要它先给出棋盘框
+  const runDetector = async (
+    img: HTMLImageElement,
+    sess: ort.InferenceSession
   ): Promise<DetectionBox[]> => {
-    inputImage.value = img
-
     status.value = t('positionEditor.imageRecognitionStatus.preprocessingImage')
     const prep = await preprocess(img)
 
@@ -659,11 +755,11 @@ export const useImageRecognition = () => {
       'positionEditor.imageRecognitionStatus.runningModelInference'
     )
     // More robust selection of input name (many exported YOLO models use 'images' as input name)
-    const inputName = session.value!.inputNames.includes('images')
+    const inputName = sess.inputNames.includes('images')
       ? 'images'
-      : session.value!.inputNames[0]
+      : sess.inputNames[0]
     const feeds = { [inputName]: prep.tensor }
-    const results = await session.value!.run(feeds)
+    const results = await sess.run(feeds)
 
     const firstOut = results.output0 || results[Object.keys(results)[0]]
     const outputData = firstOut.data as unknown as number[]
@@ -672,7 +768,80 @@ export const useImageRecognition = () => {
     status.value = t(
       'positionEditor.imageRecognitionStatus.postProcessingResults'
     )
-    const boxes = postprocess(outputData, outShape, prep.meta)
+    return postprocess(outputData, outShape, prep.meta)
+  }
+
+  /**
+   * 逐格分类通路。
+   *
+   * 定位与识别分开做：先用（内置的）检测器给出棋盘框，再在框内做亚像素晶格拟合，
+   * 然后裁出 90 个格子逐个分类。有检测器时最准；没有就靠拟合自己扫一遍，
+   * 精度差一些，但足以让流程跑起来。
+   */
+  const runCellClassification = async (
+    img: HTMLImageElement
+  ): Promise<DetectionBox[]> => {
+    const clf = sharedClassifier!
+    status.value = t('positionEditor.imageRecognitionStatus.runningModelInference')
+
+    let rough: RoughBox | null = null
+    if (detectorSession) {
+      try {
+        const det = await runDetector(img, detectorSession)
+        rough = boardRoughFrom(det)
+        if (!rough) detectorBoardMisses.value++
+        else detectorBoardMisses.value = 0
+      } catch (e) {
+        console.warn('[image-recognition] 用于定位的检测器失败，改自标定', e)
+      }
+    }
+
+    const res = await classifyBoard(img, clf, rough)
+    if (!res) throw new Error(t('lineConnect.classifierNoBoard'))
+
+    lastGridConfidence.value = res.grid.confidence
+    lastCellLabels.value = res.cellLabels
+    classifierUnmapped.value = res.unmapped
+
+    // 合成一个 Board 框：下游的 getBoardBox 与裁剪优化要靠它，
+    // 而且由晶格算出来的框比检测器给的更准。
+    const boardIdx = labelIndexOf('Board')
+    const out: DetectionBox[] = []
+    if (boardIdx >= 0) {
+      out.push({
+        box: [
+          res.grid.x0 - res.grid.dx / 2,
+          res.grid.y0 - res.grid.dy / 2,
+          res.grid.dx * GRID_COLS,
+          res.grid.dy * GRID_ROWS,
+        ],
+        score: 0.99,
+        labelIndex: boardIdx,
+      })
+    }
+    for (const b of res.boxes) out.push(b)
+
+    status.value = t(
+      'positionEditor.imageRecognitionStatus.recognitionCompleted'
+    )
+    return out
+  }
+
+  // Run the model against an already decoded image element.
+  // Run the model against an already decoded image element.
+  const runInference = async (
+    img: HTMLImageElement
+  ): Promise<DetectionBox[]> => {
+    inputImage.value = img
+
+    // 导入的是逐格分类器时走另一条通路
+    if (sharedClassifier) {
+      const cellBoxes = await runCellClassification(img)
+      detectedBoxes.value = cellBoxes
+      return cellBoxes
+    }
+
+    const boxes = await runDetector(img, session.value!)
     detectedBoxes.value = boxes
 
     status.value = t(
@@ -836,5 +1005,12 @@ export const useImageRecognition = () => {
     drawBoundingBoxes,
     updateBoardGrid,
     initializeModel,
+    // 逐格分类通路
+    recognitionMode,
+    classifierLabels,
+    lastGridConfidence,
+    lastCellLabels,
+    classifierUnmapped,
+    detectorBoardMisses,
   }
 }

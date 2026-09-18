@@ -279,6 +279,23 @@
           <p v-if="modelImported" class="lc-check__path">
             {{ modelName }} · {{ modelSizeText }}
           </p>
+          <p v-if="modelImported" class="lc-check__path">
+            {{ t('lineConnect.modelKind') }}:
+            <b>{{ kindIsClassifier ? t('lineConnect.kindClassifier') : t('lineConnect.kindDetector') }}</b>
+            <span class="muted">
+              — {{ kindIsClassifier ? t('lineConnect.kindHintClassifier') : t('lineConnect.kindHintDetector') }}
+            </span>
+          </p>
+          <p v-if="kindIsClassifier" class="lc-check__path">
+            {{ t('lineConnect.classifierClasses') }} {{ classifierLabels.length }} ·
+            <span :class="alignOk ? 'lc-good' : 'lc-warn'">{{ alignText }}</span>
+          </p>
+          <p v-if="kindIsClassifier && gridConfidence > 0" class="lc-check__path">
+            {{ t('lineConnect.gridConfidence') }} {{ gridConfidence.toFixed(1) }}
+            <span v-if="gridConfidence < 3" class="lc-warn">
+              — {{ t('lineConnect.gridConfidenceLow') }}
+            </span>
+          </p>
           <div class="lc-check__actions">
             <v-btn
               size="small"
@@ -746,6 +763,22 @@
     }
   }
 
+  /* ---------- 识别方式（检测器 / 逐格分类） ---------- */
+  const recognitionMode = recognition.recognitionMode
+  const classifierLabels = recognition.classifierLabels
+  const unmappedCells = recognition.classifierUnmapped
+  const gridConfidence = recognition.lastGridConfidence
+
+  const kindIsClassifier = computed(() => recognitionMode.value === 'classifier')
+
+  const alignOk = computed(() => unmappedCells.value === 0)
+
+  const alignText = computed(() =>
+    alignOk.value
+      ? t('lineConnect.classifierAligned')
+      : t('lineConnect.classifierMismatch', { n: unmappedCells.value })
+  )
+
   function onPickModel() {
     if (!modelBridge) return
     modelNote.value = ''
@@ -944,6 +977,18 @@
     font-size: 11px;
     opacity: 0.6;
     word-break: break-all;
+  }
+
+  /* 类别对齐与晶格置信度的提示色。scoped 样式里不能靠全局类名，
+     这两个类只在本组件用到。 */
+  .lc-good {
+    color: #35c46a;
+    opacity: 1;
+  }
+
+  .lc-warn {
+    color: #ffb020;
+    opacity: 1;
   }
 
   .lc-switches {

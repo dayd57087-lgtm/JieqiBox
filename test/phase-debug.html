@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>晶格相位诊断</title>
+<style>body{background:#14161a;color:#e6e8eb;font:11px/1.5 ui-monospace,monospace;margin:0;padding:8px}
+pre{white-space:pre-wrap;word-break:break-all}
+canvas{display:block;width:100%;background:#000;border-radius:6px;margin:6px 0}
+.ok{color:#35c46a}.bad{color:#ff5a5a}.dim{color:#9aa1ad}</style>
+</head>
+<body>
+<pre id="out">运行中…</pre>
+<canvas id="prof"></canvas>
+<div id="vis"></div>
+<script type="module">
+import { fitBoardGrid } from '/src/composables/image-recognition/gridFit.ts'
+
+const el = document.getElementById('out')
+let buf = ''; const log = m => { buf += m + '\n'; el.textContent = buf }
+const ok = m => `<span class="ok">${m}</span>`
+const bad = m => `<span class="bad">${m}</span>`
+
+const GT = { x0:46.5, dx:(796.5-46.5)/8, y0:46.5, dy:(890.5-46.5)/9, W:844, H:938 }
+const CHAR = {1:'帅',2:'仕',3:'相',4:'马',5:'车',6:'炮',7:'兵',8:'将',9:'士',10:'象',11:'马',12:'车',13:'炮',14:'卒'}
+const COLS=9, ROWS=10, CELLS=90
+
+function drawPiece(ctx,cx,cy,d,cls){
+  const r=d/2, red=cls<=7, isDark=cls===15
+  ctx.beginPath();ctx.arc(cx,cy,r,0,7);ctx.fillStyle=isDark?'#6f6f6f':'#f2e3c4';ctx.fill()
+  ctx.lineWidth=Math.max(1.5,r*0.09);ctx.strokeStyle=isDark?'#2a2a2a':(red?'#c62828':'#1a1a1a');ctx.stroke()
+  ctx.beginPath();ctx.arc(cx,cy,r*0.74,0,7);ctx.lineWidth=Math.max(1,r*0.05);ctx.stroke()
+  ctx.fillStyle=isDark?'#d0d0d0':(red?'#c62828':'#1a1a1a')
+  ctx.font=`bold ${Math.round(r*1.1)}px "PingFang SC",serif`
+  ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(isDark?'暗':(CHAR[cls]||'?'),cx,cy)
+}
+
+// 与 gridFit.ts 内部一致的投影（这里为了看原始信号）
+function rowProfile(gray,W,x0,x1,y0,y1){
+  const n=y1-y0+1, P=new Float64Array(n)
+  const left=Math.round(x0+(x1-x0)*0.1), right=Math.round(x0+(x1-x0)*0.9)
+  for(let y=y0;y<=y1;y++){let s=0,c=0;for(let x=left;x<=right;x+=2){s+=255-gray[y*W+x];c++}P[y-y0]=c?s/c:0}
+  return P
+}
+function detrend(P,win){
+  const n=P.length,half=Math.max(1,Math.round(win/2)),out=new Float64Array(n)
+  for(let i=0;i<n;i++){const a=Math.max(0,i-half),b=Math.min(n-1,i+half);let s=0
+    for(let j=a;j<=b;j++)s+=P[j]; out[i]=P[i]-s/(b-a+1)}
+  return out
+}
+
+async function run(){
+  const boardImg = await new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src='/test/xiangqi.png'})
+
+  let found=null, tried=0
+  for (let attempt=0; attempt<14 && !found; attempt++){
+    tried++
+    const W=1080,H=2340, scale=1.0+Math.random()*0.18
+    const ox=Math.round((W-GT.W*scale)/2+(Math.random()-0.5)*40)
+    const oy=Math.round(200+Math.random()*120)
+    const cv=document.createElement('canvas');cv.width=W;cv.height=H
+    const c=cv.getContext('2d')
+    c.fillStyle='#2b2f36';c.fillRect(0,0,W,H)
+    c.fillStyle='#1e2127';c.fillRect(0,0,W,190)
+    c.fillStyle='#111';c.fillRect(0,H-120,W,120)
+    c.drawImage(boardImg,ox,oy,GT.W*scale,GT.H*scale)
+    const order=[...Array(CELLS).keys()].sort(()=>Math.random()-0.5)
+    const n=24+Math.floor(Math.random()*12)
+    for(let i=0;i<n;i++){
+      const cell=order[i], r=Math.floor(cell/COLS), col=cell%COLS
+      const red=Math.random()<0.5, dk=Math.random()<0.35
+      const cls=dk?15:(red?1+Math.floor(Math.random()*7):8+Math.floor(Math.random()*7))
+      drawPiece(c, ox+(GT.x0+col*GT.dx)*scale, oy+(GT.y0+r*GT.dy)*scale, GT.dx*scale, cls)
+    }
+    const trueLat={x0:ox+GT.x0*scale, dx:GT.dx*scale, y0:oy+GT.y0*scale, dy:GT.dy*scale}
+
+    const gc=document.createElement('canvas');gc.width=W;gc.height=H
+    const gx=gc.getContext('2d',{willReadFrequently:true});gx.drawImage(cv,0,0)
+    const dd=gx.getImageData(0,0,W,H).data
+    const gray=new Uint8ClampedArray(W*H)
+    for(let i=0,p=0;i<gray.length;i++,p+=4) gray[i]=dd[p]*0.299+dd[p+1]*0.587+dd[p+2]*0.114
+
+    const pad=0.08
+    const rough={ x:trueLat.x0-trueLat.dx*(0.5+pad), y:trueLat.y0-trueLat.dy*(0.5+pad),
+                  w:trueLat.dx*(COLS+pad*2), h:trueLat.dy*(ROWS+pad*2) }
+    const fit=fitBoardGrid(gray,W,H,rough)
+    if(!fit) continue
+    if (Math.abs(fit.y0-trueLat.y0) > trueLat.dy*0.5) found={W,H,trueLat,fit,gray,cv}
+  }
+
+  if(!found){ log(tried+' 次尝试里没有复现相位错位'); window.__done=true; return }
+  const {W,H,trueLat,fit,gray,cv}=found
+  log(bad('复现了相位错位'))
+  log('真实 Y: y0='+trueLat.y0.toFixed(1)+'  dy='+trueLat.dy.toFixed(2))
+  log('拟合 Y: y0='+fit.y0.toFixed(1)+'  dy='+fit.dy.toFixed(2))
+  log('Y 偏差 '+(fit.y0-trueLat.y0).toFixed(1)+'px = '+((fit.y0-trueLat.y0)/trueLat.dy).toFixed(2)+' 格')
+  log('edgeRatio '+fit.edgeRatio.toFixed(3)+'  置信度 '+fit.confidence.toFixed(2))
+
+  const x0=Math.max(0,Math.floor(fit.x0-W*0.05)), x1=Math.min(W-1,Math.ceil(fit.x0+fit.dx*8+W*0.05))
+  const yStart=Math.max(0,Math.floor(Math.min(fit.y0,trueLat.y0)-fit.dy*1.6))
+  const yEnd=Math.min(H-1,Math.ceil(Math.max(fit.y0,trueLat.y0)+fit.dy*10.4))
+  const P=detrend(rowProfile(gray,W,x0,x1,yStart,yEnd),(yEnd-yStart)/19)
+
+  const trueLines=[...Array(ROWS).keys()].map(k=>trueLat.y0+k*trueLat.dy)
+  const fitLines=[...Array(ROWS).keys()].map(k=>fit.y0+k*fit.dy)
+  const near=(y,arr)=>arr.some(t=>Math.abs(t-y)<6)
+
+  log('')
+  log('行投影极大值 vs 两组线位置：')
+  const peaks=[]
+  for(let i=1;i<P.length-1;i++) if(P[i]>P[i-1]&&P[i]>=P[i+1]&&P[i]>0) peaks.push({y:yStart+i,v:P[i]})
+  peaks.sort((a,b)=>b.v-a.v)
+  for(const pk of peaks.slice(0,18)){
+    const onT=near(pk.y,trueLines), onF=near(pk.y,fitLines)
+    log('  y='+pk.y.toFixed(0).padStart(4)+' v='+pk.v.toFixed(1).padStart(5)+'  '
+        +(onT?'真实':'    ')+(onF?' 拟合':'     ')+((onT&&onF)?'  ←重合':'  '+(onT||onF?bad('←只落一组'):'')))
+  }
+
+  const pc=document.getElementById('prof')
+  const n=P.length
+  pc.width=Math.max(320,n); pc.height=180
+  const px=pc.getContext('2d')
+  px.fillStyle='#0c0e11'; px.fillRect(0,0,pc.width,180)
+  let mx=0; for(const v of P) if(v>mx) mx=v
+  px.strokeStyle='#4c8dff'; px.lineWidth=1; px.beginPath()
+  for(let i=0;i<n;i++){const X=i, Y=170-(P[i]/mx)*150; i?px.lineTo(X,Y):px.moveTo(X,Y)}
+  px.stroke()
+  const mark=(y,color,off)=>{ const X=y-yStart; if(X<0||X>=n) return
+    px.strokeStyle=color; px.lineWidth=1; px.beginPath(); px.moveTo(X,off); px.lineTo(X,off+16); px.stroke() }
+  for(const y of trueLines) mark(y,'#35c46a',2)
+  for(const y of fitLines) mark(y,'#ff5a5a',20)
+  const wv=document.createElement('div')
+  wv.innerHTML='<div class="dim">行投影曲线 · 绿=真实线位置 · 红=拟合线位置（错开显示）</div>'
+  wv.appendChild(pc); document.getElementById('vis').appendChild(wv)
+
+  window.__done=true
+}
+run().catch(e=>{log('异常 '+e.message);window.__done=true})
+</script>
+</body>
+</html>

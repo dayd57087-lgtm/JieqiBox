@@ -123,6 +123,17 @@ export default {
     modelLoading: '正在载入…',
     modelReloadHint: '重新开始连线后生效',
     modelDevOnly: '仅测试版提供',
+    modelKind: '识别方式',
+    kindDetector: '整图检测',
+    kindClassifier: '逐格分类',
+    kindHintDetector: '用检测器在整屏里找棋盘和棋子',
+    kindHintClassifier: '检测器定位棋盘，再逐格分类认子',
+    classifierClasses: '模型类别',
+    classifierNoBoard: '未能定位棋盘，先在设置里手动框一次或换用检测模型',
+    classifierMismatch: '有 {n} 格不在应用类别表里，识别可能不准',
+    classifierAligned: '与应用的类别表一致',
+    gridConfidence: '晶格置信度',
+    gridConfidenceLow: '偏低，棋盘定位可能不稳',
   },
   // 通用
   common: {

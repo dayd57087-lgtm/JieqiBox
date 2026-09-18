@@ -15,6 +15,5 @@ export {
   modelImportBridge,
   resetSharedSession,
 } from './useImageRecognition.real'
-
 // Also, re-export the shared types so consumers can import them from one place.
 export * from './types'

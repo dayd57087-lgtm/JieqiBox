@@ -16,6 +16,33 @@ const mtRandom = (): number => {
   return mt.random()
 }
 
+let lastSeed: number | null = null
+
+/**
+ * Reseed the draw source for face-down pieces.
+ *
+ * A jieqi position is not a position: the identities behind the face-down
+ * pieces are drawn, so the same FEN plays out differently every time. That is
+ * fine for casual play and fatal for anything that wants to reason about luck
+ * — you cannot resample the draws of a game you cannot reproduce.
+ *
+ * Career mode therefore persists the seed of every rated game (`game.fen_seed`)
+ * and can hand it back here. Mersenne Twister is deterministic given its seed,
+ * so the whole draw sequence replays exactly.
+ *
+ * @param seed the recorded seed, or `undefined` to go back to time-based
+ *             seeding (the default for ordinary play).
+ */
+export function setBoardRngSeed(seed?: number): void {
+  lastSeed = seed === undefined ? new Date().getTime() : seed
+  mt.init_seed(lastSeed)
+}
+
+/** The seed currently driving the draw sequence. `null` before the first call. */
+export function getBoardRngSeed(): number | null {
+  return lastSeed
+}
+
 // Types for GameNotation compatibility
 export type HistoryEntry = {
   type: 'move' | 'adjust'

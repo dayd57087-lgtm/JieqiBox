@@ -822,6 +822,7 @@
   import { uciToChineseMoves } from '@/utils/chineseNotation'
   import { useGameSettings } from '@/composables/useGameSettings'
   import { useHumanVsAiSettings } from '@/composables/useHumanVsAiSettings'
+  import { getCareerMovePicker, activeOpponent, useCareerUI, noteCareerUndo } from '@/composables/useCareerMatch'
   import {
     useAutoPlay,
     registerAutoPlayActions,
@@ -891,6 +892,10 @@
   // Get human vs AI settings
   const { isHumanVsAiMode, showEngineAnalysis } = useHumanVsAiSettings()
 
+  // Career mode: the drawer opens the overlay, App.vue renders it, and the
+  // flag between them is shared rather than threaded through props.
+  const { isCareerViewOpen } = useCareerUI()
+
   /* ---------- Injected State ---------- */
   const gameState = inject('game-state') as any
   const {
@@ -905,6 +910,26 @@
     undoLastMove,
     updateMoveAnnotation,
   } = gameState
+
+  /**
+   * Career mode: may the *opponent* still lean on the opening book this move?
+   *
+   * `bookPlies` is one of the four difficulty knobs. It matters because a book
+   * is a strength multiplier that is invisible to the player: an opponent that
+   * memorised forty plies looks nothing like the beginner it is supposed to be,
+   * and the match feels rigged rather than hard.
+   *
+   * Always `true` when no career game is running, so ordinary play (and the
+   * match/tournament mode) keeps the book exactly as configured.
+   */
+  const isBookAllowedForCareer = (): boolean => {
+    const opponent = activeOpponent.value
+    if (!opponent) return true
+    const plies = (history.value as any[]).filter(
+      (h: any) => h.type === 'move'
+    ).length
+    return plies < opponent.style.bookPlies
+  }
 
   const engineState = inject('engine-state') as any
   const {
@@ -1027,6 +1052,10 @@
         break
       case 'elo':
         showEloCalculatorDialog.value = true
+        break
+      case 'career':
+        // The overlay is owned by App.vue; this only flips the shared flag.
+        isCareerViewOpen.value = true
         break
       case 'restore-layout':
         restoreDefaultLayout()
@@ -1391,7 +1420,13 @@
       try {
         const enableBook = gameState?.openingBook?.config?.enableInGame
         const getBookMoveFn = gameState?.getOpeningBookMove
-        if (enableBook && typeof getBookMoveFn === 'function') {
+        // In career mode the opponent's `bookPlies` caps how long they may stay
+        // in the book; see isBookAllowedForCareer.
+        if (
+          enableBook &&
+          isBookAllowedForCareer() &&
+          typeof getBookMoveFn === 'function'
+        ) {
           const bookMove = await getBookMoveFn()
           if (bookMove) {
             console.log(
@@ -1691,6 +1726,9 @@
     if (isMatchRunning.value) {
       return
     }
+    // A career game with a move taken back no longer reflects what the player
+    // actually calculated, so it stops being rated. See useCareerMatch.
+    noteCareerUndo()
     undoLastMove()
   }
 
@@ -2396,7 +2434,40 @@
       // Set the AI move flag before playing the move
       ;(window as any).__LAST_AI_MOVE__ = move
       setTimeout(() => {
-        const ok = playMoveFromUci(move)
+        // Career mode hook — the *only* place the ladder's difficulty is
+        // applied. The engine still sees the whole board and still finds the
+        // best move; we sometimes decline to play it, choosing another of the
+        // candidates it reported instead. Weakening the engine instead would
+        // make it play moves that are plainly bad rather than plausibly
+        // suboptimal, which reads as a bug, not as an opponent.
+        //
+        // No-op when no career game is running (the picker is null).
+        let chosen = move
+        const careerPicker = getCareerMovePicker()
+        if (careerPicker) {
+          const candidates: string[] = (engineState.multiPvMoves?.value ?? [])
+            .map((pv: string[]) => pv?.[0])
+            .filter((m: string) => !!m && m !== '(none)')
+          const picked = careerPicker(move, candidates)
+          if (picked && picked !== move) {
+            console.log(
+              `[CAREER] opponent prefers '${picked}' over engine best '${move}'`
+            )
+            chosen = picked
+          }
+        }
+
+        let ok = playMoveFromUci(chosen)
+        if (!ok && chosen !== move) {
+          // The alternative was not legal in this position (stale MultiPV, a
+          // flip the board resolved differently). Fall back to the move the
+          // engine actually verified rather than re-searching into a loop.
+          console.warn(
+            `[CAREER] '${chosen}' was rejected by the board; using '${move}'`
+          )
+          ok = playMoveFromUci(move)
+          chosen = move
+        }
         bestMove.value = ''
         if (!ok) {
           // In case of a checkmate, do not search again - use trim() to remove spaces
@@ -2414,7 +2485,7 @@
           )
         } else {
           // Handle ponder logic after AI move
-          handlePonderAfterMove(move, true)
+          handlePonderAfterMove(chosen, true)
 
           nextTick(() => {
             checkAndTriggerAi()

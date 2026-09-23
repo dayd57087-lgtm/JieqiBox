@@ -19,6 +19,12 @@ use clipboard::{ClipboardContext, ClipboardProvider};
 mod opening_book;
 use opening_book::{JieqiOpeningBook, MoveData, OpeningBookStats, AddEntryRequest};
 
+mod career;
+use career::{
+    CareerProfile, CareerStats, CareerStore, CareerStoreInfo, GameSummary, NewGameRequest,
+    OpponentProgress, SavedGame,
+};
+
 // -------------------------------------------------------------
 // type definition for the engine process state
 type EngineProcess = Arc<Mutex<Option<CommandChild>>>;
@@ -251,6 +257,24 @@ fn get_opening_book_db_path(app: &AppHandle) -> Result<String, String> {
         // On desktop, use the same directory as the config file
         Ok("jieqi_openings.jb".to_string())
     }
+}
+
+/// Get the path to the career mode database file, which varies by platform.
+///
+/// Kept separate from the opening book on purpose: the book is a shared,
+/// regenerable asset while the career is this player's own history. Mixing them
+/// would mean a book import could clobber someone's record.
+fn get_career_db_path(app: &AppHandle) -> Result<String, String> {
+    if cfg!(target_os = "android") {
+        Ok(format!("{}/jieqi_career.db", app_internal_files_dir(app)))
+    } else {
+        Ok("jieqi_career.db".to_string())
+    }
+}
+
+fn open_career_store(app: &AppHandle) -> Result<CareerStore, String> {
+    let db_path = get_career_db_path(app)?;
+    CareerStore::new(db_path).map_err(|e| e.to_string())
 }
 
 /// Load configuration from the config file.
@@ -839,6 +863,122 @@ async fn opening_book_import_db(source_path: String, app: AppHandle) -> Result<(
     Ok(())
 }
 
+// Career Mode Commands
+//
+// Every command opens its own connection (same pattern as the opening book).
+// SQLite handles the concurrency and the datasets are tiny — a player will
+// never have enough games for the open cost to matter.
+
+/// Read the player's career profile, creating a default one on first run.
+#[tauri::command]
+async fn career_get_profile(app: AppHandle) -> Result<CareerProfile, String> {
+    let store = open_career_store(&app)?;
+    store.get_profile().map_err(|e| e.to_string())
+}
+
+/// Update the editable parts of the profile. Rank names are *not* stored here —
+/// they are derived from `rating` on the front end so all 12 locales work.
+#[tauri::command]
+async fn career_update_profile(
+    nickname: Option<String>,
+    avatar: Option<String>,
+    title: Option<String>,
+    app: AppHandle,
+) -> Result<CareerProfile, String> {
+    let store = open_career_store(&app)?;
+    store
+        .update_profile(nickname, avatar, title)
+        .map_err(|e| e.to_string())
+}
+
+/// Record a finished game and settle the rating in one transaction.
+#[tauri::command]
+async fn career_save_game(request: NewGameRequest, app: AppHandle) -> Result<SavedGame, String> {
+    let mut store = open_career_store(&app)?;
+    store.save_game(&request).map_err(|e| e.to_string())
+}
+
+/// Recent games, newest first.
+#[tauri::command]
+async fn career_list_games(
+    limit: Option<i32>,
+    offset: Option<i32>,
+    app: AppHandle,
+) -> Result<Vec<GameSummary>, String> {
+    let store = open_career_store(&app)?;
+    store
+        .list_games(limit.unwrap_or(50), offset.unwrap_or(0))
+        .map_err(|e| e.to_string())
+}
+
+/// Aggregates for the career dashboard: rating curve, recent form, per-opponent
+/// record, unlocked achievements.
+#[tauri::command]
+async fn career_get_stats(
+    history_limit: Option<i32>,
+    app: AppHandle,
+) -> Result<CareerStats, String> {
+    let store = open_career_store(&app)?;
+    store
+        .get_stats(history_limit.unwrap_or(200))
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn career_opponent_progress(app: AppHandle) -> Result<Vec<OpponentProgress>, String> {
+    let store = open_career_store(&app)?;
+    store.opponent_progress().map_err(|e| e.to_string())
+}
+
+/// Light a ladder step up without playing it (used to reveal the next card).
+#[tauri::command]
+async fn career_unlock_opponent(opponent_id: String, app: AppHandle) -> Result<(), String> {
+    let store = open_career_store(&app)?;
+    store
+        .unlock_opponent(&opponent_id)
+        .map_err(|e| e.to_string())
+}
+
+/// Where the career file lives, and how big it has grown.
+#[tauri::command]
+async fn career_info(app: AppHandle) -> Result<CareerStoreInfo, String> {
+    let db_path = get_career_db_path(&app)?;
+    let store = CareerStore::new(&db_path).map_err(|e| e.to_string())?;
+    let mut info = store.info().map_err(|e| e.to_string())?;
+    info.db_path = db_path;
+    Ok(info)
+}
+
+/// Export the whole career as a JSON blob the user can keep.
+#[tauri::command]
+async fn career_export(app: AppHandle) -> Result<String, String> {
+    let store = open_career_store(&app)?;
+    let profile = store.get_profile().map_err(|e| e.to_string())?;
+    let games = store.list_games(100000, 0).map_err(|e| e.to_string())?;
+    let opponents = store.opponent_progress().map_err(|e| e.to_string())?;
+
+    let payload = serde_json::json!({
+        "format": "jieqibox.career",
+        "version": career::SCHEMA_VERSION,
+        "profile": profile,
+        "games": games,
+        "opponents": opponents,
+    });
+
+    serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())
+}
+
+/// Wipe the career. Guarded by an explicit confirmation string so a stray
+/// invoke cannot erase a player's history.
+#[tauri::command]
+async fn career_reset(confirm: String, app: AppHandle) -> Result<(), String> {
+    if confirm != "RESET" {
+        return Err("career_reset requires confirm = \"RESET\"".to_string());
+    }
+    let store = open_career_store(&app)?;
+    store.reset().map_err(|e| e.to_string())
+}
+
 /// Save game notation with a file dialog (for desktop platforms)
 /// On Android, this delegates to the existing save_game_notation function
 #[tauri::command]
@@ -929,6 +1069,17 @@ pub fn run() {
             opening_book_import_entries,
             opening_book_export_db,
             opening_book_import_db,
+            // Career mode commands
+            career_get_profile,
+            career_update_profile,
+            career_save_game,
+            career_list_games,
+            career_get_stats,
+            career_opponent_progress,
+            career_unlock_opponent,
+            career_info,
+            career_export,
+            career_reset,
             // Android-specific commands
             #[cfg(target_os = "android")]
             get_bundle_identifier,

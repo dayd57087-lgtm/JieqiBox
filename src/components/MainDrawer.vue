@@ -140,6 +140,9 @@
       '<path d="M4 5h16v11H9l-5 4z" stroke-linejoin="round"/><path d="M8 9h8M8 12h5"/>',
     board:
       '<path d="M3 3h18v18H3z" stroke-linejoin="round"/><path d="M9 3v18M15 3v18M3 9h18M3 15h18"/>',
+    // Career: three rising steps — the ladder, read as a chart.
+    ladder:
+      '<path d="M4 20h16" stroke-linecap="round"/><path d="M5 20v-4h4v4M10 20v-8h4v8M15 20v-12h4v12" stroke-linejoin="round"/><path d="M18 8l1.5-2.5L21 8z" stroke-linejoin="round"/>',
   }
 
   type DrawerItem = {
@@ -218,6 +221,11 @@
     {
       labelKey: 'drawer.groupTools',
       items: [
+        {
+          id: 'career',
+          labelKey: 'career.menuEntry',
+          path: ICON.ladder,
+        },
         {
           id: 'opening-book',
           labelKey: 'toolbar.openingBook',

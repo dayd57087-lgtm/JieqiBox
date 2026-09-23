@@ -9,6 +9,8 @@
   import FlipPromptDialog from './components/FlipPromptDialog.vue'
   import FenInputDialog from './components/FenInputDialog.vue'
   import GameEndDialog from './components/GameEndDialog.vue'
+  import CareerView from './components/career/CareerView.vue'
+  import PostGameReport from './components/career/PostGameReport.vue'
 
   import { useChessGame } from './composables/useChessGame'
   import { useBoardViewState } from './composables/useBoardViewState'
@@ -20,8 +22,11 @@
   import { useAutosave } from './composables/useAutosave'
   import { useWindowManager } from './composables/useWindowManager'
   import { LANGUAGE_TO_HTML_LANG } from './utils/constants'
+  import { useCareerMatch, useCareerUI } from './composables/useCareerMatch'
+  import type { CareerOpponent } from './composables/useCareerOpponents'
+  import { runDrawerAction } from './composables/useMainDrawer'
 
-  const { locale } = useI18n()
+  const { locale, t } = useI18n()
   const configManager = useConfigManager()
   const theme = useTheme()
 
@@ -82,6 +87,68 @@
 
   // Initialize autosave functionality after providing game state
   const autosave = useAutosave()
+
+  /**
+   * Career mode.
+   *
+   * Instantiated here rather than inside the career view because a career game
+   * *is* a difference in how the whole app behaves — the end-of-game watchdog,
+   * the engine's configuration, the anti-farming guard all have to be live while
+   * the player is on the board, with the overlay long since closed.
+   */
+  const careerMatch = useCareerMatch({ game, engine })
+  const { isCareerViewOpen, lastReport } = useCareerUI()
+
+  /** Shown when a career game cannot start, e.g. no engine selected. */
+  const careerNotice = ref('')
+
+  const noticeVisible = computed({
+    get: () => !!careerNotice.value,
+    set: (v: boolean) => {
+      if (!v) careerNotice.value = ''
+    },
+  })
+
+  /**
+   * "Review" on the career report opens the same dialog the toolbar's review
+   * action does — registered centrally, so there is one implementation rather
+   * than a second one grown here.
+   */
+  const onCareerReview = () => {
+    careerMatch.closeReport()
+    runDrawerAction('review')
+  }
+
+  const onCareerPlay = async (opponent: CareerOpponent) => {
+    const started = await careerMatch.startMatch(opponent, {
+      humanSide: 'red',
+    })
+    if (started) {
+      isCareerViewOpen.value = false
+    } else {
+      careerNotice.value = t('career.engineRequired')
+    }
+  }
+
+  const onCareerExport = async () => {
+    const { useCareer } = await import('./composables/useCareer')
+    const json = await useCareer().exportCareer()
+    if (!json) {
+      careerNotice.value = t('career.exportFailed')
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(json)
+      careerNotice.value = t('career.exportCopied')
+    } catch {
+      careerNotice.value = t('career.exportFailed')
+    }
+  }
+
+  /** A career game in progress suppresses the board's own end dialog. */
+  const isCareerGameRunning = computed(
+    () => careerMatch.phase.value !== 'idle' && !lastReport.value
+  )
 
   // Initialize window manager for window size persistence
   const windowManager = useWindowManager()
@@ -230,10 +297,32 @@
       @confirm="game.confirmFenInput"
     />
     <GameEndDialog
+      v-if="!isCareerGameRunning"
       :visible="game.isGameEndDialogVisible.value"
       :game-result="game.gameEndResult.value"
       :on-close="() => (game.isGameEndDialogVisible.value = false)"
     />
+
+    <!-- Career overlay. Owned here so it sits above the board rather than
+         inside the analysis deck, which is where the entry point lives. -->
+    <CareerView
+      :visible="isCareerViewOpen"
+      @close="isCareerViewOpen = false"
+      @play="onCareerPlay"
+      @export="onCareerExport"
+    />
+
+    <PostGameReport
+      v-if="lastReport"
+      :visible="true"
+      :report="lastReport"
+      @close="careerMatch.closeReport()"
+      @review="onCareerReview"
+    />
+
+    <v-snackbar v-model="noticeVisible" :timeout="3200" location="bottom">
+      {{ careerNotice }}
+    </v-snackbar>
   </div>
 </template>
 

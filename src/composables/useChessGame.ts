@@ -1,5 +1,4 @@
 import { ref, computed, watch } from 'vue'
-import MersenneTwister from 'mersenne-twister'
 import {
   START_FEN,
   FEN_MAP,
@@ -13,20 +12,23 @@ import { useGameSettings } from './useGameSettings'
 import { useFlipPolicy } from './useFlipPolicy'
 import type { FlipMode } from './useGameSettings'
 import { useHumanVsAiSettings } from './useHumanVsAiSettings'
-import { convertXQFToJieqiNotation } from '@/utils/xqf'
+import { boardRandom, convertXQFToJieqiNotation } from '@/utils/xqf'
 import { useOpeningBook } from './useOpeningBook'
 import { useSoundEffects } from './useSoundEffects'
 import type { MoveData } from '@/types/openingBook'
 
-// Create a global instance of Mersenne Twister
-const mt = new MersenneTwister()
-
-// Set seed based on current date and time for better randomness
-mt.init_seed(new Date().getTime())
-
-// Custom random function using Mersenne Twister
+/**
+ * The board's random source: the one `xqf.ts` owns, so `setBoardRngSeed` is the
+ * single control point for every draw a game makes.
+ *
+ * This file used to keep a Mersenne Twister of its own, seeded from the clock.
+ * Everything the *game* drew — the identity of a face-down piece, the starting
+ * shuffle — came from that instance, while `setBoardRngSeed` seeded the copy in
+ * `xqf.ts`. A recorded seed therefore reproduced nothing: replaying a game, or
+ * comparing two engines that must face the same draw, silently did not work.
+ */
 const mtRandom = (): number => {
-  return mt.random()
+  return boardRandom()
 }
 
 export interface Piece {

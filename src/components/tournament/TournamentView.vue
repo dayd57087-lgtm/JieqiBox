@@ -144,13 +144,24 @@
               {{ t('tournament.abandon') }}
             </button>
           </template>
-          <button
-            class="btn btn--danger"
-            :disabled="!selected"
-            @click="onDelete"
-          >
-            {{ t('tournament.delete') }}
-          </button>
+          <template v-if="!confirmingDelete">
+            <button
+              class="btn btn--danger"
+              :disabled="!selected"
+              @click="onDelete"
+            >
+              {{ t('tournament.delete') }}
+            </button>
+          </template>
+          <template v-else>
+            <span class="notice">{{ t('tournament.confirmDelete') }}</span>
+            <button class="btn btn--danger" @click="onDeleteConfirmed">
+              {{ t('tournament.deleteYes') }}
+            </button>
+            <button class="btn" @click="confirmingDelete = false">
+              {{ t('tournament.deleteNo') }}
+            </button>
+          </template>
         </div>
 
         <template v-if="selected">
@@ -372,6 +383,7 @@
   }
 
   function onSelect() {
+    confirmingDelete.value = false
     void refreshDetail()
   }
 
@@ -430,9 +442,17 @@
     abandonTournament(selectedId.value)
   }
 
-  async function onDelete() {
+  /** Second step armed; cleared by cancelling or by finishing a delete. */
+  const confirmingDelete = ref(false)
+
+  function onDelete() {
     if (selectedId.value === null) return
-    if (!window.confirm(t('tournament.confirmDelete'))) return
+    confirmingDelete.value = true
+  }
+
+  async function onDeleteConfirmed() {
+    confirmingDelete.value = false
+    if (selectedId.value === null) return
     await api.remove(selectedId.value)
     selectedId.value = null
     await refreshAll()

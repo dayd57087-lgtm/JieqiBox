@@ -1,4 +1,4 @@
-import { computed, type Ref } from 'vue'
+import { computed, ref, type Ref } from 'vue'
 import { useGameSettings } from './useGameSettings'
 import { useAutoPlay } from './useAutoPlay'
 
@@ -26,7 +26,25 @@ export type FlipPromptKind = 'move' | 'capture'
  *
  * 例外：双方都是电脑时没有我方/对方可言，一切按我方的逻辑处理（全部询问），
  * 由旁观的人来回答。
+ *
+ * 另有第三种情形：**盘边没有人**（引擎联赛、批量自对弈）。此时没有人可以回答，
+ * 询问就等于停摆，所以暗子一律从池里随机抽取；抽签走的是可播种的随机源，
+ * 因此一局仍然可以完整复现。
  */
+/**
+ * 盘边有没有人。
+ *
+ * 模块级状态，因为它描述的是"这一局是什么性质"，而不是某个组件的显示状态：
+ * 联赛运行器置为 true，运行结束置回 false。若改成从组件层层传参，
+ * `movePiece` 里那个匿名的调用点就拿不到了。
+ */
+const isUnattended = ref(false)
+
+/** 由联赛运行器调用：标记接下来这一局没有人可以回答翻子询问。 */
+export function setFlipUnattended(value: boolean): void {
+  isUnattended.value = value
+}
+
 export function useFlipPolicy(isBoardFlipped: Ref<boolean>) {
   const { isFreeFlip } = useGameSettings()
   const { isRedAi, isBlackAi } = useAutoPlay()
@@ -48,6 +66,10 @@ export function useFlipPolicy(isBoardFlipped: Ref<boolean>) {
    *   - `capture`：是**被吃**的那一方，与走子方相反
    */
   const shouldAsk = (pieceSide: Side, kind: FlipPromptKind): boolean => {
+    // Nobody to ask: draw from the pool rather than waiting for a tap that will
+    // never come.
+    if (isUnattended.value) return false
+
     if (!isFreeFlip.value) return false
 
     // 双方都是电脑时不分我方对方，一律询问。

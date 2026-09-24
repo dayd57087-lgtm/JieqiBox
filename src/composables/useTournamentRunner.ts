@@ -2,6 +2,7 @@ import { ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { setBoardRngSeed } from '@/utils/xqf'
+import { setFlipUnattended } from './useFlipPolicy'
 import { useTournament } from './useTournament'
 import type {
   GameEndReason,
@@ -72,6 +73,23 @@ export function registerTournamentBoard(api: TournamentBoardApi) {
  * any real game.
  */
 const MAX_PLIES = 300
+
+/**
+ * A message for anything a Tauri command rejected with.
+ *
+ * `invoke` rejects with the plain `String` from `Err(String)` in Rust, not with
+ * an `Error`, so `(error as Error).message` on it is `undefined` — which is how
+ * a league once reported its only failure as "出错：undefined".
+ */
+function errorText(error: unknown): string {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'string') return error
+  try {
+    return JSON.stringify(error)
+  } catch {
+    return String(error)
+  }
+}
 
 function goCommand(timeControl: string, value: number): string {
   switch (timeControl) {
@@ -285,6 +303,11 @@ const lastError = ref('')
 
 let stopRequested = false
 
+/** Kept as a named shim so the log stays plain text and short. */
+function t9n(text: string): string {
+  return text
+}
+
 function pushLog(line: string) {
   runLog.value.unshift(`${new Date().toLocaleTimeString()} ${line}`)
   if (runLog.value.length > 200) runLog.value.pop()
@@ -393,7 +416,7 @@ async function playOneGame(
     try {
       move = await engine.go(fen, plan.timeControl, plan.timeValue)
     } catch (error) {
-      pushLog(`${engine.label} 未在时限内给出应招：${(error as Error).message}`)
+      pushLog(`${engine.label} 未在时限内给出应招：${errorText(error)}`)
       plyLabel.value = `${plies} 手`
       return {
         request: resultFor(
@@ -461,6 +484,10 @@ async function run(tournamentId: number) {
   lastError.value = ''
   phase.value = 'running'
   ;(window as any).__TOURNAMENT_QUIET__ = true
+  // No human is at the board, so a face-down piece must be drawn rather than
+  // asked about. Without this the first dark move opens the flip dialog and the
+  // league waits for a tap that never comes.
+  setFlipUnattended(true)
   pushLog('联赛开始')
 
   try {
@@ -498,7 +525,20 @@ async function run(tournamentId: number) {
         break
       }
 
-      await api.record(outcome.request)
+      try {
+        await api.record(outcome.request)
+      } catch (error) {
+        // A result that cannot be written is the one failure worth stopping for.
+        // Continuing would re-claim the same game (it is still `running`), play
+        // it again and fail again — a league that eats the night re-playing one
+        // game. Hand the game back and stop where the user can see it.
+        await api.release(plan.gameId).catch(() => undefined)
+        lastError.value = t9n(`写入对局结果失败：${errorText(error)}`)
+        pushLog(lastError.value)
+        phase.value = 'paused'
+        await api.setStatus(tournamentId, 'paused').catch(() => undefined)
+        return
+      }
       pushLog(
         `第 ${plan.pairIndex + 1} 组第 ${plan.gameIndex + 1} 局：${
           outcome.request.result === 'draw'
@@ -516,13 +556,14 @@ async function run(tournamentId: number) {
     }
   } catch (error) {
     phase.value = 'paused'
-    lastError.value = (error as Error).message
+    lastError.value = errorText(error)
     pushLog(`出错：${lastError.value}`)
     await api.setStatus(tournamentId, 'paused').catch(() => undefined)
   } finally {
     for (const session of sessions.values()) await session.dispose()
     sessions.clear()
     ;(window as any).__TOURNAMENT_QUIET__ = false
+    setFlipUnattended(false)
   }
 }
 

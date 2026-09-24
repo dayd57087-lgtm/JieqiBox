@@ -43,6 +43,19 @@ export function getBoardRngSeed(): number | null {
   return lastSeed
 }
 
+/**
+ * The board's random source, for every draw a game makes.
+ *
+ * Exported so `useChessGame` can use *this* generator rather than keeping a
+ * second one of its own. As long as there were two, seeding the board did
+ * nothing to the moves: the identities of face-down pieces came from a
+ * clock-seeded generator nobody controlled, and a stored seed could not
+ * reproduce a game — which is the one thing the seed exists for.
+ */
+export function boardRandom(): number {
+  return mtRandom()
+}
+
 // Types for GameNotation compatibility
 export type HistoryEntry = {
   type: 'move' | 'adjust'

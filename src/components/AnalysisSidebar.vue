@@ -823,6 +823,7 @@
   import { useGameSettings } from '@/composables/useGameSettings'
   import { useHumanVsAiSettings } from '@/composables/useHumanVsAiSettings'
   import { getCareerMovePicker, activeOpponent, useCareerUI, noteCareerUndo } from '@/composables/useCareerMatch'
+  import { useTournamentUI } from '@/composables/useTournament'
   import {
     useAutoPlay,
     registerAutoPlayActions,
@@ -895,6 +896,7 @@
   // Career mode: the drawer opens the overlay, App.vue renders it, and the
   // flag between them is shared rather than threaded through props.
   const { isCareerViewOpen } = useCareerUI()
+  const { isTournamentViewOpen } = useTournamentUI()
 
   /* ---------- Injected State ---------- */
   const gameState = inject('game-state') as any
@@ -1052,6 +1054,11 @@
         break
       case 'elo':
         showEloCalculatorDialog.value = true
+        break
+      case 'tournament':
+        // Same contract as career: the overlay lives in App.vue, the drawer
+        // only raises the shared flag.
+        isTournamentViewOpen.value = true
         break
       case 'career':
         // The overlay is owned by App.vue; this only flips the shared flag.

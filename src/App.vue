@@ -10,9 +10,12 @@
   import FenInputDialog from './components/FenInputDialog.vue'
   import GameEndDialog from './components/GameEndDialog.vue'
   import CareerView from './components/career/CareerView.vue'
+  import TournamentView from './components/tournament/TournamentView.vue'
   import PostGameReport from './components/career/PostGameReport.vue'
 
   import { useChessGame } from './composables/useChessGame'
+  import { registerTournamentBoard } from './composables/useTournamentRunner'
+  import { useTournamentUI } from './composables/useTournament'
   import { useBoardViewState } from './composables/useBoardViewState'
   import { registerBoardFit, requestBoardFit } from './composables/useBoardFit'
   import { useUciEngine } from './composables/useUciEngine'
@@ -69,6 +72,25 @@
 
   const game = useChessGame()
 
+  /**
+   * Hand the league runner the board it has to play on.
+   *
+   * The runner could have built its own `useChessGame` instance, and that would
+   * have been two implementations of jieqi in one binary — the exact thing the
+   * reveal rules cannot survive. It gets the same functions the analysis
+   * sidebar uses instead, so a tournament game and a played game end the same
+   * way for the same reasons.
+   */
+  registerTournamentBoard({
+    newGame: () => game.setupNewGame(),
+    engineFen: () => game.generateFenForEngine(),
+    play: (uci: string) => game.playMoveFromUci(uci),
+    legalMoves: () => game.getAllLegalMovesForCurrentPosition(),
+    sideToMove: () => game.sideToMove.value,
+    inCheck: () => game.isCurrentPositionInCheck(game.sideToMove.value),
+    finalFen: () => game.generateFen(),
+  })
+
   // Pass generateFen and gameState to ensure engine receives correct FEN format and can access game state
   const engine = useUciEngine(game.generateFen, game)
   const jaiEngine = useJaiEngine(game.generateFen, game)
@@ -98,6 +120,7 @@
    */
   const careerMatch = useCareerMatch({ game, engine })
   const { isCareerViewOpen, lastReport } = useCareerUI()
+  const { isTournamentViewOpen } = useTournamentUI()
 
   /** Shown when a career game cannot start, e.g. no engine selected. */
   const careerNotice = ref('')
@@ -310,6 +333,12 @@
       @close="isCareerViewOpen = false"
       @play="onCareerPlay"
       @export="onCareerExport"
+    />
+
+    <!-- Engine league. Ditto: owned here so it covers the whole board. -->
+    <TournamentView
+      :visible="isTournamentViewOpen"
+      @close="isTournamentViewOpen = false"
     />
 
     <PostGameReport

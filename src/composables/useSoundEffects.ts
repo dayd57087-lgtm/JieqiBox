@@ -135,10 +135,19 @@ const getAudio = (soundType: SoundType): HTMLAudioElement => {
  * Play a sound effect
  * @param soundType The type of sound to play
  */
+/**
+ * League games are played on the same board, through the same move
+ * implementation, so they would otherwise play the same sounds — a hundred
+ * games overnight, at the volume of one human game each. The tournament runner
+ * raises this flag for the duration of a run.
+ */
+const isQuiet = (): boolean => (window as any).__TOURNAMENT_QUIET__ === true
+
 const playSound = (soundType: SoundType): void => {
   // Initialize settings on first sound play
   initSoundSettings()
 
+  if (isQuiet()) return
   if (!soundEnabled.value) return
 
   try {
@@ -412,6 +421,8 @@ const stopHtmlAudioLoop = () => {
  * @param soundType The type of sound to play in loop
  */
 const playSoundLoop = (soundType: SoundType): void => {
+  if (isQuiet()) return
+
   console.log('[SOUND] playSoundLoop called:', {
     soundType,
     timestamp: new Date().toISOString(),

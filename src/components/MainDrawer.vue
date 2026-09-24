@@ -222,6 +222,11 @@
       labelKey: 'drawer.groupTools',
       items: [
         {
+          id: 'tournament',
+          labelKey: 'tournament.menuEntry',
+          path: ICON.tournament,
+        },
+        {
           id: 'career',
           labelKey: 'career.menuEntry',
           path: ICON.ladder,

@@ -5,6 +5,7 @@
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri::{AppHandle, Emitter};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tauri::async_runtime;
 use std::process::Command;
@@ -19,15 +20,59 @@ use clipboard::{ClipboardContext, ClipboardProvider};
 mod opening_book;
 use opening_book::{JieqiOpeningBook, MoveData, OpeningBookStats, AddEntryRequest};
 
+mod tournament;
+
 mod career;
 use career::{
     CareerProfile, CareerStats, CareerStore, CareerStoreInfo, GameSummary, NewGameRequest,
     OpponentProgress, SavedGame,
 };
 
+use tournament::{
+    GamePlan, GameResultInput, Standing, TournamentConfig, TournamentDetail,
+    TournamentGameRecord, TournamentStore, TournamentSummary,
+};
+
 // -------------------------------------------------------------
-// type definition for the engine process state
-type EngineProcess = Arc<Mutex<Option<CommandChild>>>;
+// Engine process registry.
+//
+// A single slot used to be enough: the analysis sidebar loads an engine, uses
+// it, kills it. A tournament needs two engines alive at the same time — and
+// when a pairing involves different binaries, two *different* engines — so the
+// state is a map keyed by a caller-supplied instance id, and engine output is
+// emitted per instance so the two streams cannot be mistaken for each other.
+//
+// The default slot keeps the original semantics exactly (spawning it kills
+// whatever was there), which is why every existing `invoke('spawn_engine')`
+// call site keeps working untouched.
+type EngineProcess = Arc<Mutex<HashMap<String, CommandChild>>>;
+
+const DEFAULT_ENGINE_SLOT: &str = "default";
+
+fn new_engine_registry() -> EngineProcess {
+    Arc::new(Mutex::new(HashMap::new()))
+}
+
+/// Map the optional caller-supplied id onto a slot name.
+fn engine_slot(engine_id: &Option<String>) -> String {
+    match engine_id {
+        Some(id) if !id.trim().is_empty() => id.trim().to_string(),
+        _ => DEFAULT_ENGINE_SLOT.to_string(),
+    }
+}
+
+/// Event carrying one engine instance's stdout.
+///
+/// The default slot keeps emitting `engine-output`, so the existing listeners
+/// (analysis sidebar, JAI engine, debug console) are untouched; named instances
+/// get their own topic instead of interleaving into that stream.
+fn engine_output_event(slot: &str) -> String {
+    if slot == DEFAULT_ENGINE_SLOT {
+        "engine-output".to_string()
+    } else {
+        format!("engine-output:{}", slot)
+    }
+}
 // -------------------------------------------------------------
 
 /// Check if the engine file exists and is a file on Android.
@@ -272,6 +317,22 @@ fn get_career_db_path(app: &AppHandle) -> Result<String, String> {
     }
 }
 
+/// A separate database file from the career one, on purpose: a tournament is
+/// disposable data that can grow to thousands of games, and it must never be
+/// able to take a player's career down with it.
+fn get_tournament_db_path(app: &AppHandle) -> Result<String, String> {
+    if cfg!(target_os = "android") {
+        Ok(format!("{}/jieqi_tournament.db", app_internal_files_dir(app)))
+    } else {
+        Ok("jieqi_tournament.db".to_string())
+    }
+}
+
+fn open_tournament_store(app: &AppHandle) -> Result<TournamentStore, String> {
+    let db_path = get_tournament_db_path(app)?;
+    TournamentStore::new(db_path).map_err(|e| e.to_string())
+}
+
 fn open_career_store(app: &AppHandle) -> Result<CareerStore, String> {
     let db_path = get_career_db_path(app)?;
     CareerStore::new(db_path).map_err(|e| e.to_string())
@@ -434,11 +495,28 @@ fn sync_and_list_engines(app_handle: &AppHandle) -> Result<Vec<String>, String> 
     Ok(available_engines)
 }
 
-/// Explicitly kills the currently running engine process, if any.
+/// Kills one engine instance, or every instance when no id is given.
 #[tauri::command]
-async fn kill_engine(process_state: tauri::State<'_, EngineProcess>) -> Result<(), String> {
-    if let Some(child) = process_state.lock().unwrap().take() {
-        let _ = child.kill();
+async fn kill_engine(
+    engine_id: Option<String>,
+    process_state: tauri::State<'_, EngineProcess>,
+) -> Result<(), String> {
+    let mut registry = process_state.lock().unwrap();
+    match engine_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    {
+        Some(id) => {
+            if let Some(child) = registry.remove(id) {
+                let _ = child.kill();
+            }
+        }
+        None => {
+            for (_, child) in registry.drain() {
+                let _ = child.kill();
+            }
+        }
     }
     Ok(())
 }
@@ -448,6 +526,7 @@ async fn kill_engine(process_state: tauri::State<'_, EngineProcess>) -> Result<(
 async fn spawn_engine(
     path: String,
     args: Vec<String>,
+    engine_id: Option<String>,
     app: AppHandle,
     process_state: tauri::State<'_, EngineProcess>,
 ) -> Result<(), String> {
@@ -467,8 +546,16 @@ async fn spawn_engine(
         let _ = app.emit("engine-output", "[DEBUG] Engine file validation passed.");
     }
     
-    // Ensure any previous engine process is terminated before starting a new one
-    kill_engine(process_state.clone()).await.ok();
+    // Whatever already sits in this slot is replaced. The default slot
+    // therefore behaves exactly as it did before, and a tournament's slots are
+    // its own — they never collide with the analysis engine.
+    let slot = engine_slot(&engine_id);
+    {
+        let mut registry = process_state.lock().unwrap();
+        if let Some(previous) = registry.remove(&slot) {
+            let _ = previous.kill();
+        }
+    }
     
     // The engine's working directory should be its parent directory
     let engine_dir = Path::new(&final_path)
@@ -494,10 +581,11 @@ async fn spawn_engine(
     };
 
     // Store the new child process in the shared state
-    *process_state.lock().unwrap() = Some(child);
+    process_state.lock().unwrap().insert(slot.clone(), child);
     
     // Spawn an async task to listen for the engine's stdout/stderr
     let app_clone = app.clone();
+    let event_name = engine_output_event(&slot);
     async_runtime::spawn(async move {
         while let Some(event) = rx.recv().await {
             if let CommandEvent::Stdout(buf) | CommandEvent::Stderr(buf) = event {
@@ -508,7 +596,7 @@ async fn spawn_engine(
                 } else {
                     String::from_utf8_lossy(&buf).into_owned()
                 };
-                let _ = app_clone.emit("engine-output", text);
+                let _ = app_clone.emit(&event_name, text);
             }
         }
     });
@@ -520,15 +608,18 @@ async fn spawn_engine(
 #[tauri::command]
 async fn send_to_engine(
     command: String,
+    engine_id: Option<String>,
     process_state: tauri::State<'_, EngineProcess>,
 ) -> Result<(), String> {
-    if let Some(child) = process_state.lock().unwrap().as_mut() {
+    let slot = engine_slot(&engine_id);
+    let mut registry = process_state.lock().unwrap();
+    if let Some(child) = registry.get_mut(&slot) {
         child
             .write(format!("{}\n", command).as_bytes())
             .map_err(|e| format!("Failed to write to engine: {}", e))?;
         Ok(())
     } else {
-        Err("Engine not running.".into())
+        Err(format!("Engine not running in slot '{}'.", slot))
     }
 }
 
@@ -979,7 +1070,114 @@ async fn career_reset(confirm: String, app: AppHandle) -> Result<(), String> {
     store.reset().map_err(|e| e.to_string())
 }
 
+// ------------------------------------------------------- Engine tournament
+//
+// The schedule and the ratings live in Rust (`tournament.rs`); the games are
+// played by the front end, which owns the board rules. These commands are the
+// entire interface between the two.
+
+/// Create a tournament and materialise its full schedule.
+#[tauri::command]
+async fn tournament_create(
+    config: TournamentConfig,
+    app: AppHandle,
+) -> Result<TournamentSummary, String> {
+    TournamentStore::validate(&config)?;
+    let mut store = open_tournament_store(&app)?;
+    let id = store.create(&config).map_err(|e| e.to_string())?;
+    store
+        .summary(id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "tournament disappeared right after creation".to_string())
+}
+
+#[tauri::command]
+async fn tournament_list(app: AppHandle) -> Result<Vec<TournamentSummary>, String> {
+    let store = open_tournament_store(&app)?;
+    store.list().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn tournament_get(id: i64, app: AppHandle) -> Result<TournamentDetail, String> {
+    let store = open_tournament_store(&app)?;
+    store
+        .detail(id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("no such tournament: {}", id))
+}
+
+/// The next game to play, already claimed. `None` when the schedule is done.
+#[tauri::command]
+async fn tournament_next_game(id: i64, app: AppHandle) -> Result<Option<GamePlan>, String> {
+    let mut store = open_tournament_store(&app)?;
+    store.plan_next(id).map_err(|e| e.to_string())
+}
+
+/// Give a claimed game back without a result (runner stopping, engines that
+/// would not start).
+#[tauri::command]
+async fn tournament_release_game(game_id: i64, app: AppHandle) -> Result<(), String> {
+    let store = open_tournament_store(&app)?;
+    store.release(game_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn tournament_record_game(request: GameResultInput, app: AppHandle) -> Result<(), String> {
+    let mut store = open_tournament_store(&app)?;
+    store.record(&request).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn tournament_games(id: i64, app: AppHandle) -> Result<Vec<TournamentGameRecord>, String> {
+    let store = open_tournament_store(&app)?;
+    store.games(id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn tournament_standings(id: i64, app: AppHandle) -> Result<Vec<Standing>, String> {
+    let store = open_tournament_store(&app)?;
+    store.standings(id).map_err(|e| e.to_string())
+}
+
+/// `draft` | `running` | `paused` | `finished`
+#[tauri::command]
+async fn tournament_set_status(
+    id: i64,
+    status: String,
+    app: AppHandle,
+) -> Result<(), String> {
+    if !matches!(status.as_str(), "draft" | "running" | "paused" | "finished") {
+        return Err(format!("unknown tournament status: {}", status));
+    }
+    let store = open_tournament_store(&app)?;
+    store.set_status(id, &status).map_err(|e| e.to_string())
+}
+
+/// Return whatever the last run left in flight to the queue.
+#[tauri::command]
+async fn tournament_reset_running(id: i64, app: AppHandle) -> Result<(), String> {
+    let store = open_tournament_store(&app)?;
+    store.reset_running(id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn tournament_export(id: i64, app: AppHandle) -> Result<String, String> {
+    let store = open_tournament_store(&app)?;
+    store.export(id).map_err(|e| e.to_string())
+}
+
+/// Guarded like `career_reset`: a stray invoke must not delete a league.
+#[tauri::command]
+async fn tournament_delete(id: i64, confirm: String, app: AppHandle) -> Result<(), String> {
+    if confirm != "DELETE" {
+        return Err("tournament_delete requires confirm = \"DELETE\"".to_string());
+    }
+    let store = open_tournament_store(&app)?;
+    store.delete(id).map_err(|e| e.to_string())
+}
+
 /// Save game notation with a file dialog (for desktop platforms)
+
 /// On Android, this delegates to the existing save_game_notation function
 #[tauri::command]
 async fn save_game_notation_with_dialog(content: String, default_filename: String, app: AppHandle) -> Result<String, String> {
@@ -1041,7 +1239,7 @@ async fn paste_from_clipboard(_app: AppHandle) -> Result<String, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(Arc::new(Mutex::new(None)) as EngineProcess)
+        .manage(new_engine_registry())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
@@ -1080,6 +1278,19 @@ pub fn run() {
             career_info,
             career_export,
             career_reset,
+            // Engine tournament commands
+            tournament_create,
+            tournament_list,
+            tournament_get,
+            tournament_next_game,
+            tournament_release_game,
+            tournament_record_game,
+            tournament_games,
+            tournament_standings,
+            tournament_set_status,
+            tournament_reset_running,
+            tournament_export,
+            tournament_delete,
             // Android-specific commands
             #[cfg(target_os = "android")]
             get_bundle_identifier,

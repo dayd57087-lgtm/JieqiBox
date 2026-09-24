@@ -30,14 +30,22 @@
         <div v-if="showCreate" class="form">
           <label class="field">
             <span>{{ t('tournament.name') }}</span>
-            <input v-model="form.name" type="text" :placeholder="t('tournament.namePlaceholder')" />
+            <input
+              v-model="form.name"
+              type="text"
+              :placeholder="t('tournament.namePlaceholder')"
+            />
           </label>
 
           <label class="field">
             <span>{{ t('tournament.format') }}</span>
             <select v-model="form.format">
-              <option value="gauntlet">{{ t('tournament.formatGauntlet') }}</option>
-              <option value="roundRobin">{{ t('tournament.formatRoundRobin') }}</option>
+              <option value="gauntlet">
+                {{ t('tournament.formatGauntlet') }}
+              </option>
+              <option value="roundRobin">
+                {{ t('tournament.formatRoundRobin') }}
+              </option>
             </select>
           </label>
 
@@ -57,7 +65,12 @@
 
           <label class="field">
             <span>{{ t('tournament.gamesPerPairing') }}</span>
-            <input v-model.number="form.gamesPerPairing" type="number" min="2" step="2" />
+            <input
+              v-model.number="form.gamesPerPairing"
+              type="number"
+              min="2"
+              step="2"
+            />
           </label>
 
           <label class="field">
@@ -88,7 +101,11 @@
           </div>
 
           <div class="form__actions">
-            <button class="btn btn--primary" :disabled="busy || !canCreate" @click="onCreate">
+            <button
+              class="btn btn--primary"
+              :disabled="busy || !canCreate"
+              @click="onCreate"
+            >
               {{ t('tournament.createRun') }}
             </button>
             <span v-if="notice" class="notice">{{ notice }}</span>
@@ -110,13 +127,25 @@
             :disabled="!selected || selected.gamesDone >= selected.gamesTotal"
             @click="onStart"
           >
-            {{ selected && selected.gamesDone > 0 ? t('tournament.resume') : t('tournament.start') }}
+            {{
+              selected && selected.gamesDone > 0
+                ? t('tournament.resume')
+                : t('tournament.start')
+            }}
           </button>
           <template v-else>
-            <button class="btn" @click="onPause">{{ t('tournament.pause') }}</button>
-            <button class="btn" @click="onAbandon">{{ t('tournament.abandon') }}</button>
+            <button class="btn" @click="onPause">
+              {{ t('tournament.pause') }}
+            </button>
+            <button class="btn" @click="onAbandon">
+              {{ t('tournament.abandon') }}
+            </button>
           </template>
-          <button class="btn btn--danger" :disabled="!selected" @click="onDelete">
+          <button
+            class="btn btn--danger"
+            :disabled="!selected"
+            @click="onDelete"
+          >
             {{ t('tournament.delete') }}
           </button>
         </div>
@@ -128,17 +157,20 @@
             :max="Math.max(selected.gamesTotal, 1)"
           ></progress>
           <p class="muted">
-            {{ t('tournament.progress', {
-              done: selected.gamesDone,
-              void: selected.gamesVoid,
-              total: selected.gamesTotal,
-              status: t(`tournament.status.${selected.status}`),
-            }) }}
-            <template v-if="selected.seed"> · {{ t('tournament.seedShort', { seed: selected.seed }) }}</template>
+            {{
+              t('tournament.progress', {
+                done: selected.gamesDone,
+                void: selected.gamesVoid,
+                total: selected.gamesTotal,
+                status: t(`tournament.status.${selected.status}`),
+              })
+            }}
+            <template v-if="selected.seed">
+              ·
+              {{ t('tournament.seedShort', { seed: selected.seed }) }}</template
+            >
           </p>
-          <p v-if="isRunning" class="live">
-            {{ gameLabel }} — {{ plyLabel }}
-          </p>
+          <p v-if="isRunning" class="live">{{ gameLabel }} — {{ plyLabel }}</p>
           <p v-if="lastError" class="error">{{ lastError }}</p>
         </template>
       </section>
@@ -226,7 +258,10 @@
     startTournament,
     useTournamentRunner,
   } from '@/composables/useTournamentRunner'
-  import { useConfigManager, type ManagedEngine } from '@/composables/useConfigManager'
+  import {
+    useConfigManager,
+    type ManagedEngine,
+  } from '@/composables/useConfigManager'
   import type {
     Standing,
     TournamentConfig,
@@ -241,7 +276,8 @@
   const { t } = useI18n()
   const api = useTournament()
   const { getEngines } = useConfigManager()
-  const { phase, gameLabel, plyLabel, runLog, lastError } = useTournamentRunner()
+  const { phase, gameLabel, plyLabel, runLog, lastError } =
+    useTournamentRunner()
   /** The runner owns the phase; the buttons only ever ask what it is. */
   const isRunning = computed(() => phase.value === 'running')
 
@@ -250,7 +286,17 @@
   const detail = ref<TournamentDetail | null>(null)
   const standings = ref<Standing[]>([])
   const games = ref<TournamentGameRecord[]>([])
-  const engines = ref<ManagedEngine[]>([])
+  /**
+   * Read the engine list rather than snapshot it.
+   *
+   * `useConfigManager` keeps `configData` in a module-level ref and the config
+   * file is parsed asynchronously, which means this overlay mounts against an
+   * empty engine list. Copying that list into a local `ref` at mount time froze
+   * the emptiness in place — the picker said "no engines configured" in an app
+   * that had three. A computed subscribes to the ref instead, so the list
+   * appears the moment the config arrives.
+   */
+  const engines = computed<ManagedEngine[]>(() => getEngines())
   const picked = ref<string[]>([])
   const busy = ref(false)
   const notice = ref('')
@@ -277,7 +323,8 @@
   })
 
   const nameOf = (entryId: number) =>
-    detail.value?.entrants.find(entry => entry.id === entryId)?.name ?? `#${entryId}`
+    detail.value?.entrants.find(entry => entry.id === entryId)?.name ??
+    `#${entryId}`
 
   const resultLabel = (result: TournamentGameRecord['result']) => {
     if (result === 'red') return t('tournament.redWins')
@@ -409,7 +456,6 @@
   }
 
   onMounted(async () => {
-    engines.value = getEngines()
     await refreshList()
     if (tournaments.value.length) {
       selectedId.value = tournaments.value[0].id

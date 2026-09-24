@@ -513,7 +513,8 @@ async fn kill_engine(
             }
         }
         None => {
-            for (_, child) in registry.drain() {
+            let running = std::mem::take(&mut *registry);
+            for child in running.into_values() {
                 let _ = child.kill();
             }
         }

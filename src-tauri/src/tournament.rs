@@ -325,6 +325,21 @@ fn bradley_terry(entry_ids: &[i64], results: &[(i64, i64, f64)]) -> HashMap<i64,
 
 // ------------------------------------------------------------------- store
 
+/// One row of the schedule as read back from the queue, before the entrants
+/// are joined on.
+///
+/// A named struct rather than a six-element tuple: `row.get(1)` next to
+/// `row.get(4)` is readable, but `(i64, i32, i32, i64, i64, i64)` at a call site
+/// is three chances to swap red for black.
+struct QueuedGame {
+    game_id: i64,
+    pair_index: i32,
+    game_index: i32,
+    red_entry: i64,
+    black_entry: i64,
+    seed: i64,
+}
+
 pub struct TournamentStore {
     conn: Connection,
 }
@@ -422,17 +437,23 @@ impl TournamentStore {
                 "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?1)",
                 params![SCHEMA_VERSION.to_string()],
             )?;
-            // Games a previous run left mid-flight: nothing is driving them any
-            // more, so they go back into the queue instead of blocking the
-            // schedule forever.
-            self.conn.execute(
-                "UPDATE tournament_game SET status = 'pending', started_at = NULL
-                 WHERE status = 'running'",
-                [],
-            )?;
         }
 
         // if current < 2 { ... future migration ... }
+
+        // Orphan repair. This runs on *every* open, not just the first one.
+        //
+        // A database that was just opened cannot have a live engine behind any
+        // `running` row: nothing has been spawned yet in this process. So every
+        // claim found here was left by a run that was killed, and returning it
+        // to the queue is what makes a resume work. Gating this on the version
+        // step above — where it started life — meant it never ran again, and a
+        // resumed tournament would sit for ever on the game it died on.
+        self.conn.execute(
+            "UPDATE tournament_game SET status = 'pending', started_at = NULL
+             WHERE status = 'running'",
+            [],
+        )?;
 
         Ok(())
     }
@@ -452,10 +473,6 @@ impl TournamentStore {
         }
         if config.time_value <= 0 {
             return Err("time control value must be positive".into());
-        }
-        if config.format == "gauntlet" && config.entries.len() < 3 {
-            // A gauntlet of two is a single pairing dressed up as a league.
-            return Err("a gauntlet needs a challenger and at least two opponents".into());
         }
         for entry in &config.entries {
             if entry.path.trim().is_empty() {
@@ -491,20 +508,21 @@ impl TournamentStore {
 
         // Games per pairing, forced even so every pairing is a set of
         // colour-swapped pairs.
-        let mut per_pairing = config.games_per_pairing.unwrap_or(DEFAULT_GAMES_PER_PAIRING);
-        if per_pairing < 2 {
-            per_pairing = 2;
-        }
-        if per_pairing % 2 != 0 {
-            per_pairing += 1;
-        }
-        per_pairing = per_pairing.min(20);
+        // Forced even — and at least two — so every pairing is a whole number of
+        // colour-swapped pairs. Computed as "how many pairs" and then doubled
+        // rather than with a remainder test, which is the version that cannot be
+        // off by one.
+        let blocks_per_pairing = (config
+            .games_per_pairing
+            .unwrap_or(DEFAULT_GAMES_PER_PAIRING)
+            .clamp(2, 20)
+            + 1)
+            / 2;
+        let per_pairing = blocks_per_pairing * 2;
 
-        let master_seed = config.seed.unwrap_or_else(|| {
-            // Deterministic default rather than a random one: a tournament the
-            // user did not seed should still be replayable tomorrow.
-            (now / 1000) & 0x7FFF_FFFF
-        });
+        // Deterministic default rather than a random one: a tournament the user
+        // did not seed should still be replayable tomorrow.
+        let master_seed = config.seed.unwrap_or((now / 1000) & 0x7FFF_FFFF);
 
         let tx = self.conn.transaction()?;
         tx.execute(
@@ -543,7 +561,7 @@ impl TournamentStore {
             entry_ids.push(tx.last_insert_rowid());
         }
 
-        let blocks = per_pairing / 2;
+        let blocks = blocks_per_pairing;
         let mut scheduled = 0i32;
         let cap = config.max_games.unwrap_or(i32::MAX).max(1);
         'outer: for (pair_index, (a, b)) in pairings.iter().enumerate() {
@@ -606,7 +624,7 @@ impl TournamentStore {
     /// One query per list, with the counters as correlated subqueries: the
     /// standings screen repaints while a league runs, and three extra round
     /// trips per tournament would be three extra chances to read a stale count.
-    const SUMMARY_COLUMNS: &'static str = "
+    const SUMMARY_COLUMNS: &str = "
         t.id, t.name, t.format, t.time_control, t.time_value,
         t.games_per_pairing, t.seed, t.opening_plies, t.status,
         t.created_at, t.updated_at,
@@ -719,7 +737,7 @@ impl TournamentStore {
             return Ok(None);
         };
 
-        let next: Option<(i64, i32, i32, i64, i64, i64)> = self
+        let next: Option<QueuedGame> = self
             .conn
             .query_row(
                 "SELECT id, pair_index, game_index, red_entry, black_entry, seed
@@ -728,48 +746,48 @@ impl TournamentStore {
                  ORDER BY pair_index, game_index LIMIT 1",
                 params![tournament_id],
                 |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                        row.get(5)?,
-                    ))
+                    Ok(QueuedGame {
+                        game_id: row.get(0)?,
+                        pair_index: row.get(1)?,
+                        game_index: row.get(2)?,
+                        red_entry: row.get(3)?,
+                        black_entry: row.get(4)?,
+                        seed: row.get(5)?,
+                    })
                 },
             )
             .optional()?;
 
-        let Some((game_id, pair_index, game_index, red_id, black_id, seed)) = next else {
+        let Some(queued) = next else {
             return Ok(None);
         };
 
         let red = self
-            .entrant(red_id)?
+            .entrant(queued.red_entry)?
             .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
         let black = self
-            .entrant(black_id)?
+            .entrant(queued.black_entry)?
             .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
 
         let games_in_pairing: i32 = self.conn.query_row(
             "SELECT COUNT(*) FROM tournament_game
              WHERE tournament_id = ?1 AND pair_index = ?2",
-            params![tournament_id, pair_index],
+            params![tournament_id, queued.pair_index],
             |row| row.get(0),
         )?;
 
         let now = chrono::Utc::now().timestamp_millis();
         self.conn.execute(
             "UPDATE tournament_game SET status = 'running', started_at = ?2 WHERE id = ?1",
-            params![game_id, now],
+            params![queued.game_id, now],
         )?;
 
         Ok(Some(GamePlan {
-            game_id,
+            game_id: queued.game_id,
             tournament_id,
-            pair_index,
-            game_index,
-            seed,
+            pair_index: queued.pair_index,
+            game_index: queued.game_index,
+            seed: queued.seed,
             red,
             black,
             time_control: tournament.time_control,
@@ -964,32 +982,6 @@ impl TournamentStore {
         });
         Ok(payload.to_string())
     }
-
-    pub fn game_result(&self, game_id: i64) -> Result<Option<TournamentGameRecord>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, pair_index, game_index, red_entry, black_entry, seed, status,
-                    result, reason, moves, duration_ms, final_fen, finished_at
-             FROM tournament_game WHERE id = ?1",
-        )?;
-        let mut rows = stmt.query_map(params![game_id], |row| {
-            Ok(TournamentGameRecord {
-                id: row.get(0)?,
-                pair_index: row.get(1)?,
-                game_index: row.get(2)?,
-                red_entry: row.get(3)?,
-                black_entry: row.get(4)?,
-                seed: row.get(5)?,
-                status: row.get(6)?,
-                result: row.get(7)?,
-                reason: row.get(8)?,
-                moves: row.get(9)?,
-                duration_ms: row.get(10)?,
-                final_fen: row.get(11)?,
-                finished_at: row.get(12)?,
-            })
-        })?;
-        rows.next().transpose()
-    }
 }
 
 // ------------------------------------------------------------------- tests
@@ -997,6 +989,7 @@ impl TournamentStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     fn entry(name: &str) -> TournamentEntryInput {
         TournamentEntryInput {
@@ -1063,19 +1056,39 @@ mod tests {
     }
 
     #[test]
-    fn claims_are_released_when_a_run_is_interrupted() {
-        let mut store = store();
+    fn a_killed_run_gets_its_game_back() {
+        let path = std::env::temp_dir().join(format!(
+            "jieqi_tournament_test_{}_interrupt.db",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&path);
+
+        let mut store = TournamentStore::new(&path).unwrap();
         let id = store.create(&config("roundRobin", 3)).unwrap();
         let plan = store.plan_next(id).unwrap().unwrap();
         assert!(store.plan_next(id).unwrap().unwrap().game_id != plan.game_id);
 
-        // Reopening the store is what a restart does, and the in-flight claim
-        // has to come back — a game that is neither played nor queued is a hole
-        // in the schedule.
-        let path = ":memory:";
-        let _ = path;
+        // Drop the store without recording anything: exactly what a killed app
+        // leaves behind — a game marked `running` that nobody is playing.
+        drop(store);
+
+        // Reopening is what the next launch does, and the repair belongs in
+        // `migrate`. A game that is neither played nor queued is a hole in the
+        // schedule, and the schedule must not be able to lose one.
+        let mut store = TournamentStore::new(&path).unwrap();
+        assert_eq!(store.plan_next(id).unwrap().unwrap().game_id, plan.game_id);
+
+        // `reset_running` is the same repair on demand, for a run the user
+        // stopped rather than one that died. It returns *every* claim, not just
+        // the most recent one, so the queue restarts from the earliest game that
+        // has no result.
+        let second = store.plan_next(id).unwrap().unwrap();
+        assert_ne!(second.game_id, plan.game_id);
         store.reset_running(id).unwrap();
         assert_eq!(store.plan_next(id).unwrap().unwrap().game_id, plan.game_id);
+
+        drop(store);
+        let _ = fs::remove_file(&path);
     }
 
     #[test]
@@ -1179,8 +1192,22 @@ mod tests {
     #[test]
     fn validation_rejects_the_shapes_that_cannot_work() {
         let mut store = store();
-        assert!(TournamentStore::validate(&config("gauntlet", 2)).is_err());
+        let mut no_path = config("roundRobin", 3);
+        no_path.entries[1].path = String::new();
+        let mut bad_control = config("roundRobin", 3);
+        bad_control.time_control = "wallclock".to_string();
+        let mut zero_time = config("roundRobin", 3);
+        zero_time.time_value = 0;
+
+        assert!(TournamentStore::validate(&config("roundRobin", 1)).is_err());
         assert!(TournamentStore::validate(&config("bogus", 4)).is_err());
+        assert!(TournamentStore::validate(&no_path).is_err());
+        assert!(TournamentStore::validate(&bad_control).is_err());
+        assert!(TournamentStore::validate(&zero_time).is_err());
+
+        // Two engines in a gauntlet is one pairing: exactly the "new build
+        // against the old one" case, so it has to be allowed.
+        assert!(TournamentStore::validate(&config("gauntlet", 2)).is_ok());
         assert!(TournamentStore::validate(&config("roundRobin", 4)).is_ok());
         assert!(store.create(&config("roundRobin", 4)).is_ok());
     }

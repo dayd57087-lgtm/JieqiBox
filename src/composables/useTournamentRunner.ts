@@ -236,12 +236,16 @@ class EngineSession {
     what: string
   ): Promise<string> {
     if (this.waiter) {
-      return Promise.reject(new Error(`already waiting for a reply from ${this.label}`))
+      return Promise.reject(
+        new Error(`already waiting for a reply from ${this.label}`)
+      )
     }
     return new Promise<string>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.waiter = null
-        reject(new Error(`${this.label} did not answer ${what} in ${timeoutMs} ms`))
+        reject(
+          new Error(`${this.label} did not answer ${what} in ${timeoutMs} ms`)
+        )
       }, timeoutMs)
       this.waiter = { test, resolve, reject, timer }
       // The token may already be sitting in the buffer from a previous chunk.
@@ -342,8 +346,6 @@ async function playOneGame(
   await black.newGame()
 
   let plies = 0
-  let illegalBy: 'red' | 'black' | null = null
-  let failed: { side: 'red' | 'black'; reason: GameEndReason } | null = null
 
   while (true) {
     if (stopRequested) {
@@ -372,7 +374,14 @@ async function playOneGame(
 
     if (plies >= MAX_PLIES) {
       return {
-        request: resultFor(plan, 'draw', 'adjudication', plies, startedAt, board.finalFen()),
+        request: resultFor(
+          plan,
+          'draw',
+          'adjudication',
+          plies,
+          startedAt,
+          board.finalFen()
+        ),
         aborted: false,
       }
     }
@@ -384,14 +393,13 @@ async function playOneGame(
     try {
       move = await engine.go(fen, plan.timeControl, plan.timeValue)
     } catch (error) {
-      failed = { side, reason: 'timeout' }
       pushLog(`${engine.label} 未在时限内给出应招：${(error as Error).message}`)
       plyLabel.value = `${plies} 手`
       return {
         request: resultFor(
           plan,
           side === 'red' ? 'black' : 'red',
-          failed.reason,
+          'timeout',
           plies,
           startedAt,
           board.finalFen()
@@ -419,7 +427,6 @@ async function playOneGame(
     }
 
     if (!board.play(move)) {
-      illegalBy = side
       pushLog(`${engine.label} 走出非法招法 ${move}，判负`)
       return {
         request: resultFor(
@@ -436,7 +443,6 @@ async function playOneGame(
 
     plies += 1
     plyLabel.value = `${plies} 手`
-    void illegalBy
   }
 }
 

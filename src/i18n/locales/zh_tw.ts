@@ -23,6 +23,8 @@ export default {
     noEngines: '還沒有設定引擎，請先到引擎管理裡新增。',
     orderHint: '挑戰賽中，第一個選中的引擎是擂主。',
     createRun: '產生賽程',
+    pickTwo: '至少選擇兩個引擎。',
+    pickOneMore: '還需要再選一個引擎。',
     created: '已排定 {total} 局。',
     start: '开始',
     resume: '繼續',

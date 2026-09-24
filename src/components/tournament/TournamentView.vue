@@ -108,6 +108,9 @@
             >
               {{ t('tournament.createRun') }}
             </button>
+            <span v-if="createBlockedReason" class="muted">
+              {{ createBlockedReason }}
+            </span>
             <span v-if="notice" class="notice">{{ notice }}</span>
           </div>
         </div>
@@ -315,11 +318,19 @@
     () => tournaments.value.find(item => item.id === selectedId.value) ?? null
   )
 
-  const canCreate = computed(() => {
-    const enough = picked.value.length >= 2
-    const gauntletNeedsThree =
-      form.value.format !== 'gauntlet' || picked.value.length >= 3
-    return enough && gauntletNeedsThree
+  const canCreate = computed(() => picked.value.length >= 2)
+
+  /**
+   * Why the create button is off, in words.
+   *
+   * A disabled button that does not say what it is waiting for is how this bug
+   * survived a device test: the click did nothing, and nothing on screen said
+   * the schedule wanted a third engine.
+   */
+  const createBlockedReason = computed(() => {
+    if (picked.value.length === 0) return t('tournament.pickTwo')
+    if (picked.value.length === 1) return t('tournament.pickOneMore')
+    return ''
   })
 
   const nameOf = (entryId: number) =>

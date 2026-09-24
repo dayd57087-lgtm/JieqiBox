@@ -1178,8 +1178,8 @@ async fn tournament_delete(id: i64, confirm: String, app: AppHandle) -> Result<(
 }
 
 /// Save game notation with a file dialog (for desktop platforms)
-
-/// On Android, this delegates to the existing save_game_notation function
+///
+/// On Android, this delegates to the existing save_game_notation function.
 #[tauri::command]
 async fn save_game_notation_with_dialog(content: String, default_filename: String, app: AppHandle) -> Result<String, String> {
     #[cfg(target_os = "android")]

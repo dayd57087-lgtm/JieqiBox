@@ -6,9 +6,6 @@ on:
   pull_request:
     branches: [main, master]
 
-permissions:
-  contents: write
-
 jobs:
   lint-and-test:
     name: Lint and Test
@@ -43,37 +40,11 @@ jobs:
       - name: Install Clippy
         run: rustup component add clippy
 
-      # TEMPORARY DIAGNOSTIC STEP. Revert once the lint failure is understood.
-      # Job logs are unreadable without write access to this repository, so the
-      # output is published two ways: as step annotations, and as a branch.
       - name: Check Rust
         run: |
           cd src-tauri
-          set +e
-          { cargo check; echo "CARGO_CHECK_EXIT=$?"; } 2>&1 | tee /tmp/r.txt
-          { cargo clippy -- -D warnings; echo "CLIPPY_EXIT=$?"; } 2>&1 | tee -a /tmp/r.txt
-
-          echo "::error::rust-diag: $(grep -cE '^error' /tmp/r.txt) error lines; $(grep -m1 -oE 'CARGO_CHECK_EXIT=[0-9]+' /tmp/r.txt) $(grep -m1 -oE 'CLIPPY_EXIT=[0-9]+' /tmp/r.txt)"
-          grep -nE "^(error|warning: unused)" /tmp/r.txt | head -12 | while IFS= read -r line; do
-            echo "::error::rust-diag $line"
-          done
-          grep -A6 -E "^error" /tmp/r.txt | head -40 | while IFS= read -r line; do
-            echo "::warning::rust-diag $line"
-          done
-
-          mkdir -p /tmp/ci-report
-          cp /tmp/r.txt /tmp/ci-report/rust.txt
-          cd /tmp/ci-report
-          git init -q .
-          git config user.email "ci@local"
-          git config user.name "ci"
-          git add -A
-          git commit -qm "clippy report"
-          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" HEAD:refs/heads/ci-diagnostics || true
-
-          grep -qE "^CARGO_CHECK_EXIT=0" /tmp/r.txt || exit 1
-          grep -qE "^CLIPPY_EXIT=0" /tmp/r.txt || exit 1
-          exit 0
+          cargo check
+          cargo clippy -- -D warnings
 
       - name: Run tests (if available)
         run: npm test || echo "No tests configured yet"

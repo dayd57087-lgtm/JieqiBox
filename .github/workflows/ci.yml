@@ -46,8 +46,8 @@ jobs:
           cargo check
           cargo clippy -- -D warnings
 
-      - name: Run tests (if available)
-        run: npm test || echo "No tests configured yet"
+      - name: Run tests
+        run: npm test
 
       - name: Check formatting
         run: |

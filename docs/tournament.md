@@ -5,11 +5,11 @@
 ## 为什么这样切分职责
 
 | 归 Rust（`src-tauri/src/tournament.rs`） | 归 TypeScript（`src/composables/useTournamentRunner.ts`） |
-| --- | --- |
-| 赛程：谁和谁、下几局、谁执红 | 真的把棋下出来 |
-| 每局的暗子种子 | 判断为什么结束（将死 / 困毙 / 超时 / 非法招） |
-| 哪一局是"下一局" | 引擎进程的启动、握手、超时 |
-| 积分与等级分 | 把结果回报给 Rust |
+| ---------------------------------------- | --------------------------------------------------------- |
+| 赛程：谁和谁、下几局、谁执红             | 真的把棋下出来                                            |
+| 每局的暗子种子                           | 判断为什么结束（将死 / 困毙 / 超时 / 非法招）             |
+| 哪一局是"下一局"                         | 引擎进程的启动、握手、超时                                |
+| 积分与等级分                             | 把结果回报给 Rust                                         |
 
 理由是三条必须有唯一答案的东西：**可复现、可续跑、可核对**。
 赛程和评级只要有两处实现，崩溃一次就会互相对不上；而"这步棋合不合法"必须只有棋规说了算。
@@ -47,17 +47,17 @@ BT 用全部对局一次性拟合每人一个强度，并且**每次查询从对
 
 ## 命令一览
 
-| 命令 | 作用 |
-| --- | --- |
-| `tournament_create` | 校验并创建联赛，一次排完全部赛程 |
-| `tournament_list` / `tournament_get` | 列表 / 详情（含参赛引擎） |
-| `tournament_next_game` | 认领下一局（`null` 表示已排完） |
-| `tournament_release_game` | 把认领的局退回队列 |
-| `tournament_record_game` | 记录结果（`void: true` 表示作废） |
-| `tournament_games` / `tournament_standings` | 对局列表 / 积分榜 |
-| `tournament_set_status` | `draft` / `running` / `paused` / `finished` |
-| `tournament_reset_running` | 把在飞的局退回队列 |
-| `tournament_export` / `tournament_delete` | 导出 JSON / 删除（需 `confirm: "DELETE"`） |
+| 命令                                        | 作用                                        |
+| ------------------------------------------- | ------------------------------------------- |
+| `tournament_create`                         | 校验并创建联赛，一次排完全部赛程            |
+| `tournament_list` / `tournament_get`        | 列表 / 详情（含参赛引擎）                   |
+| `tournament_next_game`                      | 认领下一局（`null` 表示已排完）             |
+| `tournament_release_game`                   | 把认领的局退回队列                          |
+| `tournament_record_game`                    | 记录结果（`void: true` 表示作废）           |
+| `tournament_games` / `tournament_standings` | 对局列表 / 积分榜                           |
+| `tournament_set_status`                     | `draft` / `running` / `paused` / `finished` |
+| `tournament_reset_running`                  | 把在飞的局退回队列                          |
+| `tournament_export` / `tournament_delete`   | 导出 JSON / 删除（需 `confirm: "DELETE"`）  |
 
 数据库独立于生涯模式：`jieqi_tournament.db`，与 `jieqi_career.db` 分开，
 一个可以随便删的联赛不该有机会带走玩家的生涯记录。
@@ -120,13 +120,71 @@ BT 用全部对局一次性拟合每人一个强度，并且**每次查询从对
    数据库证据：`jieqi_tournament.db` 建库后一直停在 36864 字节、三张表 0 行。
 
    教训有两条，比 bug 本身更重要：
-
    - **前后端的校验必须同源。** `canCreate` 和 `TournamentStore::validate` 是两个
      各自演化的副本，不一致时前端赢，后端永远收不到请求。要么让前端只做"能否点击"
      的粗判、由后端返回真正的错误，要么把规则放在一处。
    - **禁用的按钮必须说明它想要什么。** 现在补了"至少选择两个引擎"/
      "还需要再选一个引擎"。一个不说原因的灰按钮，正是这个 bug 能通过一次
      真机验证的原因。
+
+### 第五轮：把联赛真正跑起来时暴露的两个根因 bug
+
+前四轮都在证明"它能建、能排赛程"。真在设备上跑起来后，日志和界面暴露出两个让
+这个功能名存实亡的问题——都不是边角，是主路径。
+
+5. **暗子一移动就弹出翻子对话框，无人值守的联赛永久停摆。**
+
+   `useChessGame.movePiece` 的判定链：
+
+   ```
+   moverIsFaceDown = 暗子 && !skipFlipLogic && !isMatchMode
+   if (moverIsFaceDown && shouldAsk(side, 'move'))  → 弹窗等人指定棋子
+   else if (moverIsFaceDown)                        → 从池中随机抽取
+   ```
+
+   而 `useFlipPolicy.shouldAsk` 里有一条"双方都是电脑 → 一律询问"。那条规则是给
+   **观战**设计的：两台引擎下棋，由旁观的人回答。联赛恰好也满足"双方都是电脑"，
+   于是每一次暗子移动都落到"弹窗等人"那一支。揭棋开局几手内必然有暗子移动，
+   所以联赛会在第一步暗子移动时卡住，直到有人去点——与"联赛"二字完全相反。
+
+   修法不是置 `__MATCH_MODE__ = true`：那条路是给 JAI 引擎的（棋子身份由 UCI
+   第 5 个字符显式给出），设成 true 会让普通 USI 引擎的暗子永远不会被揭示，
+   棋局状态直接坏掉。
+
+   正确做法是补上第三种情形——**盘边没有人**。`useFlipPolicy` 新增模块级
+   `isUnattended` 和 `setFlipUnattended()`，为真时 `shouldAsk` 一律返回 false，
+   暗子走"从池中随机抽取"那一支；抽签走的是可播种的随机源，所以一局仍可复现。
+
+6. **每局下发的种子对局面毫无作用（生涯模式的复现同样失效）。**
+
+   工程里存在两个互不相干的 Mersenne Twister：
+
+   | 位置                          | 谁在播种             | 谁在用                                                |
+   | ----------------------------- | -------------------- | ----------------------------------------------------- |
+   | `utils/xqf.ts`                | `setBoardRngSeed()`  | XQF 存档路径                                          |
+   | `composables/useChessGame.ts` | 模块加载时按时间播种 | **一局棋的全部抽取**：`drawCharForSide`、开局身份洗牌 |
+
+   于是 `setBoardRngSeed()` 对棋局是空操作。后果：
+   - 联赛的每局种子、以及成对局"两局共用同一暗子序列"的设计，全是装饰——
+     没有任何东西受它控制；
+   - 生涯模式存下来的 `fen_seed` 同样复现不出一局棋，而 `xqf.ts` 的注释还明确
+     宣称"the whole draw sequence replays exactly"。
+
+   修法是只留一个可播种的源：`xqf.ts` 导出 `boardRandom()`，
+   `useChessGame.ts` 改用它，`setBoardRngSeed` 成为唯一控制点。默认行为不变
+   （没人调用时仍是按时间播种）。
+
+顺带修掉的两处：
+
+- **错误信息恒为 `undefined`。** Tauri 的 `invoke` 以字符串 reject，不是 `Error`，
+  所以 `(error as Error).message` 永远是 undefined——运行日志里那行
+  `出错：undefined` 就是这么来的。加 `errorText()` 统一处理。
+- **写入结果失败会让整届联赛反复重下同一局。** 现在改为：记录失败就释放该局
+  （退回队列）并停下，把原因显示出来。不释放而继续，会不断重新认领同一局、
+  下完再失败，一晚上只跑一局。
+- **删除联赛改为应用内两步确认**，不再用 `window.confirm`。Tauri Android WebView
+  上 `confirm()` 的行为没能验证；如果它静默返回 true，一次误触就是静默删除一
+  小时的对局记录。现在需要点第二个明确标注的按钮，且切换联赛会清除待确认状态。
 
 ## 待办（按优先级）
 
